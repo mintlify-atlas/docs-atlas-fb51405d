@@ -1,0 +1,217 @@
+---
+title: "Track Daily Nutrition and Calories in HealtyHelp"
+sidebarTitle: "Nutrition Tracking"
+description: "Log meals by type, view daily and weekly macro progress, edit or cancel entries, and monitor your nutritional intake over time in HealtyHelp."
+---
+
+# Nutrition Tracking
+
+HealtyHelp's tracking system lets users log every meal they eat against the recipe catalog, review nutritional totals for any day, week, or month, and get real-time macro breakdowns. All data is stored with Bogotá local time (`UTC-5`) so that day boundaries match the user's location.
+
+---
+
+## How Consumption Logging Works
+
+When a user clicks **"Registrar consumo"** on a recipe card, the app calls `POST /api/consumos/:recetaId`. The server:
+
+1. Looks up the recipe to get its current nutritional data.
+2. Determines the meal `tipo` automatically from the current Bogotá hour:
+   - `desayuno` → 06:00–11:59
+   - `almuerzo` → 12:00–16:59
+   - `cena` → 17:00–05:59 (next day)
+   - `snack` → always used if `receta.cat === 'postres-snacks'`
+3. Checks the daily limit for that type (max **3 snacks** per day; no limit on main meals).
+4. Creates a `Consumo` document with a snapshot of the recipe and its nutritional data.
+
+For manual entries (`POST /api/consumos/manual`), the user selects both the recipe and the `tipo` explicitly along with a target date.
+
+---
+
+## The `Consumo` Schema
+
+```js
+// server/models/Consumo.js
+{
+  userId:   ObjectId,         // ref: User, required
+  recetaId: ObjectId,         // ref: Recipe, required
+  recetaSnapshot: {
+    nombre: String,
+    img:    String,
+    desc:   String,
+  },
+  tipo: String,               // enum: desayuno | almuerzo | cena | snack
+  fechaBogota: String,        // 'YYYY-MM-DD' — Bogotá local date
+  horaBogota:  String,        // 'HH:mm' — Bogotá local time
+  nutri: Mixed,               // nutritional snapshot at log time
+  timestamps: true,
+  versionKey: false,
+}
+```
+
+**Index:** `{ userId: 1, fechaBogota: 1 }` for fast per-day lookups.
+
+---
+
+## Timezone Handling
+
+All dates and times are stored as plain strings in **Bogotá time (UTC−5)**. The server computes them via a `bogotaAhora()` utility:
+
+```js
+const bogotaAhora = () => {
+  const ahora    = new Date();
+  const offsetMs = -5 * 60 * 60 * 1000;
+  const bogota   = new Date(ahora.getTime() + offsetMs);
+
+  const fecha = `${yyyy}-${mm}-${dd}`; // e.g. "2025-06-01"
+  const hora  = `${hh}:${min}`;        // e.g. "14:35"
+  return { fecha, hora, hora24: bogota.getUTCHours() };
+};
+```
+
+<Warning>
+  Because `fechaBogota` is a string (`YYYY-MM-DD`), day boundaries are always based on Bogotá midnight, regardless of where the server is hosted. Never use the MongoDB `createdAt` timestamp for grouping daily consumption — always use `fechaBogota`.
+</Warning>
+
+---
+
+## Meal Types
+
+| `tipo` | Auto-assigned hours (Bogotá) | Max per day |
+|---|---|---|
+| `desayuno` | 06:00 – 11:59 | Unlimited |
+| `almuerzo` | 12:00 – 16:59 | Unlimited |
+| `cena` | 17:00 – 05:59 | Unlimited |
+| `snack` | Any hour (for `postres-snacks` category) | **3** |
+
+---
+
+## Tracking Views (`VistaSeguimiento`)
+
+The tracking page provides three period views:
+
+### Day View (`periodo = 'dia'`)
+
+Shows the logged day's meals organised in four sections — **Desayuno**, **Almuerzo**, **Cena**, and **Snack / Postre** — with empty slot placeholders and an "+ Añadir" button for each. The colour-coded `tipo` badge uses:
+
+- `#f59e0b` Desayuno
+- `#06b6d4` Almuerzo
+- `#a855f7` Cena
+- `#10b981` Snack
+
+### Weekly and Monthly Views
+
+Switching to `semana` or `mes` shows every day in the selected range grouped by date, sorted descending. The left sidebar lists week ranges or month names; clicking one loads that period.
+
+### Nutritional Summary Panel (`ResumenNutricional`)
+
+The right-side panel accumulates all `nutri` snapshots in the selected period using a `sumarNutri()` helper and renders:
+
+- **Donut chart** — macro split (grasas/carbs/prot) as percentage of total grams
+- **Calorie total** — displayed in the donut centre
+- **Accordion sections** — five collapsible sections:
+
+| Section | Fields shown |
+|---|---|
+| Macronutrientes | cal (kcal), carb, gras, prot, carbNetos, fiber |
+| Minerales principales | sodio, colesterol, calcio, hierro, potasio, magnesio, fosforo, zinc |
+| Vitaminas | vitA, vitB6, vitB12, vitC, vitD, vitE, vitK, folato, niacina, tiamina, riboflavina |
+| Grasas detalladas | grasSat, grasMonoins, grasPoliins, grasTrans, omega3, omega6 |
+| Azúcares | azucar, glucosa, fructosa, lactosa, sacarosa |
+
+---
+
+## API Endpoints
+
+### Log a Consumption (Quick)
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer <token>" \
+  https://api.healtyhelp.com/api/consumos/<recetaId>
+```
+
+The server detects the `tipo` from the current Bogotá hour. Returns:
+
+```json
+{ "consumo": { "_id": "...", "tipo": "almuerzo", "fechaBogota": "2025-06-01", ... } }
+```
+
+### Add a Manual Entry
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"recetaId": "<id>", "tipo": "cena", "fecha": "2025-05-30"}' \
+  https://api.healtyhelp.com/api/consumos/manual
+```
+
+Body parameters:
+
+| Field | Type | Description |
+|---|---|---|
+| `recetaId` | string | MongoDB ObjectId of the recipe |
+| `tipo` | string | `desayuno` \| `almuerzo` \| `cena` \| `snack` |
+| `fecha` | string | `YYYY-MM-DD` in Bogotá time |
+
+### Cancel a Log Entry
+
+```bash
+curl -X DELETE \
+  -H "Authorization: Bearer <token>" \
+  https://api.healtyhelp.com/api/consumos/<consumoId>
+```
+
+Returns `{ "ok": true }` on success. Returns `404` with `{ "alreadyDeleted": true }` if the entry no longer exists (safe to ignore in optimistic-delete flows).
+
+### Edit the `tipo` of an Existing Entry
+
+```bash
+curl -X PUT \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"tipo": "desayuno"}' \
+  https://api.healtyhelp.com/api/consumos/<consumoId>/tipo
+```
+
+The server validates the new `tipo` against the day's existing entries and the snack limit, excluding the current document from the conflict check.
+
+### Query Endpoints
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/consumos/hoy` | Today's entries in Bogotá time, sorted by `horaBogota` |
+| `GET /api/consumos/dias` | Distinct `fechaBogota` values with at least one entry, sorted descending |
+| `GET /api/consumos/dia/:fecha` | All entries for a specific `YYYY-MM-DD` date |
+| `GET /api/consumos/semana/:lunes` | All entries from Monday to Sunday of the given week |
+| `GET /api/consumos/mes/:yearMes` | All entries for a given month, e.g. `2025-06` |
+| `GET /api/consumos/receta/:recetaId/hoy` | Check if a specific recipe was already logged today, and whether the slot is blocked |
+
+---
+
+## Editing a Log Entry
+
+Each consumption card in the tracking view has an **"Editar tipo"** button. Clicking it expands an inline `tipo` selector. Selecting a new type calls `PUT /api/consumos/:id/tipo`. The UI updates optimistically only after the server confirms.
+
+```jsx
+// VistaSeguimiento — edit handler
+const handleEditarTipo = async (consumoId, nuevoTipo) => {
+  await api.put(`/consumos/${consumoId}/tipo`, { tipo: nuevoTipo });
+  setEditandoId(null);
+  cargarConsumos();
+};
+```
+
+---
+
+## Macro Progress Bars
+
+The `PanelRecomendaciones` panel (embedded at the bottom of the tracking view) computes today's macro split as percentages of total consumed calories. Three colour-coded progress bars are rendered:
+
+| Macro | Colour |
+|---|---|
+| Carbohidratos | `#eab308` |
+| Proteínas | `#a855f7` |
+| Grasas | `#06b6d4` |
+
+Progress toward the TDEE calorie target is shown separately as a filled bar with remaining/excess kcal labels. The TDEE is calculated by the recommendation engine using the Mifflin-St Jeor formula — see [Recommendations](/features/recommendations) for details.

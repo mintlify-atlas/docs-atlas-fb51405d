@@ -1,0 +1,220 @@
+---
+title: "Manage Terms of Service and NutriBot AI Prompt"
+sidebarTitle: "Terms & AI Config"
+description: "How to publish new Terms of Service versions and configure the NutriBot system prompt from the HealtyHelp admin panel, including model schemas and TTL cache behavior."
+---
+
+The admin panel exposes two configuration endpoints that affect all users: the Terms of Service document and the NutriBot AI system prompt.
+
+---
+
+## Terms of Service
+
+### Data Model — `TermsDocument`
+
+Each time terms are published a **new** document is created in the `TermsDocument` collection. The current active version is always the one with the most recent `publishedAt`.
+
+| Field | Type | Description |
+|---|---|---|
+| `version` | `String` (required) | Semantic version string, e.g. `"1.2.0"` |
+| `content` | `String` (required) | Full HTML content of the terms |
+| `publishedBy` | `ObjectId → User` | Admin who published this version |
+| `publishedAt` | `Date` | Defaults to `new Date()` at creation time |
+
+### Seeding Initial Terms
+
+When the server starts, `seedTerms.js` checks whether any `TermsDocument` exists in the collection. If it is empty, version `1.0.0` (the default Colombian legal framework text) is inserted automatically. If any document already exists, the script exits silently with no changes.
+
+```bash
+# The seed runs automatically at server startup via:
+#   require('./scripts/seedTerms')() inside server/index.js
+# To run it manually:
+node server/scripts/seedTerms.js
+```
+
+### Get the Current Terms
+
+Returns the document with the latest `publishedAt`.
+
+```bash
+GET /api/admin/terms
+Authorization: Bearer <admin_token>
+```
+
+```json
+{
+  "terms": {
+    "_id": "665f...",
+    "version": "1.0.0",
+    "content": "<h3>1. Identificación y Objeto</h3><p>Healthy Help es una...",
+    "publishedBy": "665f001122334455aabbcc00",
+    "publishedAt": "2025-03-01T00:00:00.000Z"
+  }
+}
+```
+
+If no terms have been published yet, `terms` is `null`.
+
+### Publish a New Version
+
+<Warning>
+  Publishing a new version immediately sets `termsAccepted: false` and `termsVersion: ""` on **every non-admin user account**. The next time each user opens the app they will see a re-acceptance modal and cannot continue until they accept. This action cannot be undone.
+</Warning>
+
+```bash
+PUT /api/admin/terms
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "version": "1.1.0",
+  "content": "<h3>1. Identificación y Objeto</h3><p>Updated content...</p>"
+}
+```
+
+**Validation rules:**
+
+- Both `version` and `content` are required — omitting either returns `400`.
+- `version` must differ from the currently active version — publishing the same version string returns `400`.
+
+```json
+// 200 — success
+{
+  "success": true,
+  "terms": {
+    "_id": "666a...",
+    "version": "1.1.0",
+    "content": "...",
+    "publishedBy": "665f001122334455aabbcc00",
+    "publishedAt": "2025-06-15T09:00:00.000Z"
+  }
+}
+
+// 400 — version unchanged
+{
+  "error": "La versión publicada debe ser diferente a la actual"
+}
+```
+
+The admin who publishes the terms is **excluded** from the `updateMany` — only `{ _id: { $ne: req.user._id } }` records are flagged.
+
+### TermsManager Component
+
+`client/src/components/admin/TermsManager.jsx` provides a rich-text editor (using `contentEditable` + `document.execCommand`) with:
+
+- Block-level format selector (paragraph, H1, H2, H3).
+- Inline formatting buttons (bold, italic, underline).
+- List buttons (unordered, ordered), blockquote.
+- Undo / redo.
+- Character counter.
+- Side-by-side "Vista previa" toggle that renders the HTML output.
+- Version input field — publish button is disabled until `version` is non-empty and differs from the active version.
+
+---
+
+## NutriBot AI Prompt Configuration
+
+### Data Model — `AIConfig`
+
+A single `AIConfig` document lives in the database. If none exists it is created automatically with the default prompt.
+
+| Field | Type | Description |
+|---|---|---|
+| `prompt` | `String` | System prompt injected before every NutriBot conversation |
+
+**Default system prompt:**
+
+```
+Eres NutriBot, el asistente nutricional de HealtyHelp.
+Solo respondes preguntas sobre nutrición, recetas y alimentación saludable.
+Si el usuario pregunta algo fuera de estos temas, responde amablemente
+que solo puedes ayudar con temas nutricionales.
+Responde en español, de forma clara, amigable y concisa.
+```
+
+### TTL Cache
+
+To avoid a database read on every chat message the server keeps an in-memory cache of the `AIConfig` document:
+
+```js
+let _configCache = null;
+let _configCacheAt = 0;
+const CONFIG_TTL_MS = 60 * 1000; // 60 seconds
+```
+
+After `PUT /api/chat/prompt` succeeds, `_configCache` is reset to `null` so the next request re-reads from MongoDB. This means changes to the prompt take effect within **at most 60 seconds** for any active conversations.
+
+### Get the Current Prompt
+
+```bash
+GET /api/chat/prompt
+Authorization: Bearer <any_authenticated_user_token>
+```
+
+```json
+{
+  "prompt": "Eres NutriBot, el asistente nutricional de HealtyHelp.\n..."
+}
+```
+
+### Update the Prompt
+
+```bash
+PUT /api/chat/prompt
+Authorization: Bearer <any_authenticated_user_token>
+Content-Type: application/json
+
+{
+  "prompt": "Eres NutriBot, el asistente nutricional de HealtyHelp.\nSolo respondes preguntas sobre nutrición, recetas y alimentación saludable.\nSi el usuario pregunta algo fuera de estos temas, responde amablemente\nque solo puedes ayudar con temas nutricionales.\nResponde en español, de forma clara, amigable y concisa.\nSé especialmente cuidadoso con recetas para personas con diabetes."
+}
+```
+
+An empty or whitespace-only `prompt` returns `400`.
+
+```json
+// 200 — success
+{
+  "message": "Prompt actualizado",
+  "prompt": "Eres NutriBot, ..."
+}
+
+// 400 — empty prompt
+{
+  "error": "El prompt no puede estar vacío"
+}
+```
+
+<Note>
+  The `GET` and `PUT /api/chat/prompt` routes only require `protect` (any authenticated user). The admin panel UI restricts access at the component level — only users with `role: "admin"` reach the `PanelIA` tab.
+</Note>
+
+### How the Prompt Is Used at Runtime
+
+When a user sends a message to NutriBot (`POST /api/chat`), the system prompt is assembled as:
+
+```
+<config.prompt>               ← editable via PUT /api/chat/prompt
+
+RECETAS DISPONIBLES (N):
+• Recipe Name [cat] | 320kcal | Description
+...
+
+Perfil de "Username":
+- Condiciones / dieta: diabetes, hipertension
+- Tipo de comida activo: almuerzo
+- Alergias: gluten
+- Preferencias: vegano
+```
+
+The user's health profile — conditions, meal categories, allergies, and preferences — is **automatically appended** to your custom prompt. You do not need to include profile-fetching instructions in the prompt text.
+
+### PanelIA Component
+
+`client/src/components/admin/PanelIA.jsx` shows:
+
+- A header with the NutriBot robot icon and subtitle.
+- A status badge: **Gemini 2.5 Flash · Activo**.
+- Metric cards (total users, messages today — placeholder, tokens used — placeholder).
+- A resizable `<textarea>` for editing the system prompt with a live character counter.
+- A note reminding admins that the user health profile is appended automatically.
+- A **Guardar instrucciones** button that calls `PUT /api/chat/prompt`.

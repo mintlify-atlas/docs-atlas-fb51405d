@@ -1,0 +1,327 @@
+---
+title: "HealtyHelp Architecture: Frontend, API, and Database"
+sidebarTitle: "Architecture"
+description: "How HealtyHelp's React/Vite frontend, Express 5 REST API, MongoDB database, and third-party integrations fit together as a full-stack application."
+---
+
+## System Overview
+
+HealtyHelp is a monorepo containing two independent packages that communicate over HTTP. The React/Vite client runs in the user's browser and talks exclusively to the Express REST API. The API authenticates requests via JWT, enforces role-based access control, and persists data in MongoDB Atlas. External cloud services handle AI inference, image storage, OAuth, and email.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                         Browser (client/)                        │
+│                                                                  │
+│  React 19  ·  React Router v7  ·  Axios  ·  jsPDF               │
+│  AuthProvider  ·  useAuth  ·  useChatStore  ·  useFiltroSalud    │
+│  Lazy-loaded route components  ·  Dark mode  ·  Toast system     │
+└───────────────────────────┬──────────────────────────────────────┘
+                            │  HTTPS / REST (JSON)
+                            │  Authorization: Bearer <JWT>
+┌───────────────────────────▼──────────────────────────────────────┐
+│                       Express 5 API (server/)                    │
+│                                                                  │
+│  Helmet · HPP · XSS filter · express-rate-limit · CORS          │
+│  Passport (Google OAuth)                                         │
+│                                                                  │
+│  Routes → Controllers → Mongoose Models                          │
+│  /api/auth  /api/users  /api/recipes  /api/consumos              │
+│  /api/chat  /api/admin  /api/favoritos  /api/recomendaciones     │
+│  /api/terms  /api/notifications  /api/contacto  /api/utils       │
+└────┬──────────────┬──────────────┬──────────────┬───────────────┘
+     │              │              │              │
+     ▼              ▼              ▼              ▼
+ MongoDB        Groq AI       Cloudinary    Google OAuth
+ Atlas          LLaMA 3.3     (images)      + Nodemailer
+ (Mongoose)     70B (chat)    (CDN)         (email)
+```
+
+---
+
+## Monorepo Structure
+
+```
+healtyhelp/
+├── client/                    # React/Vite frontend
+│   ├── public/
+│   ├── src/
+│   │   ├── api/axios.js       # Axios instance pre-configured with VITE_API_URL
+│   │   ├── components/
+│   │   │   ├── admin/         # Dashboard, UserList, Stats, RecipeManagement…
+│   │   │   ├── auth/          # Login, Register, GoogleCallback, ForgotPassword…
+│   │   │   ├── inicio/        # VistaInicio, RobotIA (NutriBot floating widget)
+│   │   │   ├── layout/        # Navbar, Footer, FondoAnimado, PrivateRoute
+│   │   │   ├── profile/       # UserProfile
+│   │   │   └── vistas/        # VistaSeguimiento, VistaFavoritos, VistaChatbot…
+│   │   ├── context/
+│   │   │   └── AuthProvider.jsx
+│   │   ├── hooks/
+│   │   │   ├── useAuth.js
+│   │   │   ├── useChatStore.js
+│   │   │   ├── useFiltroSalud.js
+│   │   │   └── useTermsGuard.js
+│   │   └── App.jsx            # Root component — routing, dark mode, terms/cookie gates
+│   ├── .env                   # VITE_API_URL=http://localhost:5000/api
+│   └── package.json           # React 19, Vite 7, React Router v7, Axios, jsPDF
+│
+└── server/                    # Express 5 backend
+    ├── config/
+    │   └── passport.js        # Google OAuth 2.0 strategy
+    ├── controllers/           # Request handlers per resource
+    ├── middleware/
+    │   └── auth.js            # protect (JWT) + admin (role check) + restrictTo
+    ├── models/                # Mongoose schemas
+    ├── routes/                # Express routers
+    ├── scripts/
+    │   ├── initSuperAdmin.js  # One-time super-admin bootstrap
+    │   └── seedTerms.js       # Seeds initial T&C document on first run
+    ├── server.js              # Entry point — middleware stack + route mounting
+    └── package.json           # Express 5, Mongoose, Groq SDK, Passport, Cloudinary…
+```
+
+---
+
+<CardGroup cols={2}>
+  <Card title="Frontend" icon="browser">
+    React 19 + Vite 7, lazy-loaded routes, AuthProvider context, and module-scoped state hooks.
+  </Card>
+  <Card title="API Server" icon="server">
+    Express 5 with a layered middleware stack: security headers → rate limiting → XSS sanitization → JWT auth → role check → controller.
+  </Card>
+  <Card title="Database" icon="database">
+    MongoDB via Mongoose 8. Eight collections — User, Recipe, Consumo, Notification, AIConfig, AdminLog, AdminInvitation, TermsDocument.
+  </Card>
+  <Card title="Integrations" icon="plug">
+    Groq AI (LLaMA 3.3 70B), Cloudinary (images), Google OAuth via Passport, Nodemailer (email).
+  </Card>
+</CardGroup>
+
+---
+
+## Frontend Architecture
+
+### React 19 + React Router v7
+
+`App.jsx` is the root component. It wraps the entire application in `AuthProvider` and uses React Router's `<BrowserRouter>` for client-side navigation. Every page-level component is **lazy-loaded** with `React.lazy` + `<Suspense>` to keep the initial bundle small:
+
+```jsx
+const VistaChatbot      = lazy(() => import('./components/vistas/VistaChatbot'));
+const RecipeManagement  = lazy(() => import('./components/admin/RecipeManagement'));
+const Dashboard         = lazy(() => import('./components/admin/Dashboard'));
+// …and so on for every route component
+```
+
+Protected routes use the `<PrivateRoute>` component, which redirects unauthenticated users to `/login`. Admin-only routes additionally accept a `requireAdmin={true}` prop:
+
+```jsx
+<Route
+  path="/admin"
+  element={
+    <PrivateRoute requireAdmin={true}>
+      <Dashboard />
+    </PrivateRoute>
+  }
+/>
+```
+
+### AuthProvider Context
+
+`AuthProvider` (in `src/context/AuthProvider.jsx`) manages the global authentication state — the current `user` object, the JWT token, and helpers like `login`, `logout`, `checkAuth`, and `register`. It exposes its value through `AuthContext`, consumed by the `useAuth` hook throughout the component tree.
+
+### Custom Hooks
+
+| Hook | Purpose |
+|---|---|
+| `useAuth` | Consumes `AuthContext`; exposes `user`, `login`, `logout`, `isAdmin`, `loading`, `checkAuth`, and `setGooglePassword` for Google-linked accounts. |
+| `useChatStore` | Module-level singleton store for NutriBot chat state. Uses a `Set` of listener functions to synchronize state across multiple mounted components (floating widget and full-page chatbot view) without a global state library. Sends the last 10 messages as conversation history to `/api/chat`. |
+| `useFiltroSalud` | Manages health-condition filters and category selection for the recipe catalog. For authenticated users it syncs filters with the server (`/api/chat/health-profile`); for guests it persists to `localStorage`. Includes debounced revert logic on network errors. |
+| `useTermsGuard` | Tracks whether the current session has accepted the active Terms & Conditions version. |
+
+### Routing Table
+
+| Path | Component | Access |
+|---|---|---|
+| `/` | `VistaInicio` | Public |
+| `/login` | `Login` | Public (redirects to `/` if authenticated) |
+| `/registro` | `Register` | Public |
+| `/google-callback` | `GoogleCallback` | Public |
+| `/recuperar` | `ForgotPassword` | Public |
+| `/reset-password/:token` | `ResetPassword` | Public |
+| `/verificar-email` | `VerificarEmail` | Public |
+| `/contacto` | `VistaContacto` | Public |
+| `/chatbot` | `VistaChatbot` | Public |
+| `/seguimiento` | `VistaSeguimiento` | 🔒 Authenticated |
+| `/favoritos` | `VistaFavoritos` | 🔒 Authenticated |
+| `/perfil` | `UserProfile` | 🔒 Authenticated |
+| `/admin` | `Dashboard` | 🔒 Admin |
+| `/admin/users` | `UserList` | 🔒 Admin |
+| `/admin/stats` | `Stats` | 🔒 Admin |
+| `/admin/recipes` | `RecipeManagement` | 🔒 Admin |
+| `/admin/imagenes` | `ImagenesAprobacion` | 🔒 Admin |
+
+---
+
+## Server Architecture
+
+### Middleware Stack
+
+Requests to `/api/*` pass through the following middleware layers in order, as defined in `server/server.js`:
+
+```
+Incoming request
+      │
+      ▼
+  CORS (origins: FRONTEND_URL, localhost:5173/3000, production domains)
+      │
+      ▼
+  Helmet (security headers)
+      │
+      ▼
+  HPP (HTTP Parameter Pollution protection)
+      │
+      ▼
+  express-rate-limit — 500 req / 15 min (all /api/*)
+  express-rate-limit — 20 req / 15 min  (/api/auth/login, production only)
+      │
+      ▼
+  express.json / express.urlencoded (10 MB body limit)
+      │
+      ▼
+  XSS sanitizer (recursive filterXSS on all string fields in req.body)
+      │
+      ▼
+  passport.initialize()
+      │
+      ▼
+  Route handler
+      │
+  protect middleware (JWT verification + fresh User lookup from DB)
+      │
+  admin middleware (role === 'admin' check, fresh DB lookup)
+      │
+  Controller function
+```
+
+### Authentication Middleware (`server/middleware/auth.js`)
+
+**`protect`** — Extracts the Bearer token from `Authorization`, verifies it with `JWT_SECRET`, looks up the user fresh from MongoDB (excluding `password`), and attaches the result to `req.user`. Returns `401` if the token is missing, invalid, or the user no longer exists.
+
+**`admin`** — Re-fetches the user by `_id` from MongoDB (to catch role changes without re-issuing tokens) and returns `403` if `role !== 'admin'`. Updates `req.user` with the fresh document.
+
+**`restrictTo(...roles)`** — Generic role guard for endpoints that need a role other than `admin`.
+
+### Route → Controller → Model Pattern
+
+Each resource follows a strict three-layer structure:
+
+```
+server/routes/recipes.js      ← Express router, applies protect/admin middleware
+      │
+      ▼
+server/controllers/recipes.js ← Business logic, query building, error handling
+      │
+      ▼
+server/models/Recipe.js       ← Mongoose schema + indexes + instance methods
+```
+
+### API Route Prefixes
+
+| Prefix | Description |
+|---|---|
+| `/api/auth` | Registration, login, Google OAuth, email verification, password reset, terms acceptance |
+| `/api/users` | User profile reads and updates |
+| `/api/recipes` | Recipe catalog CRUD, reviews, review replies, review image upload |
+| `/api/consumos` | Meal consumption logging and history |
+| `/api/chat` | NutriBot message endpoint, health profile read/write |
+| `/api/favoritos` | Toggle and fetch favorites |
+| `/api/recomendaciones` | Personalized recipe recommendations |
+| `/api/admin` | Admin operations: user management, banning, invite management, audit log |
+| `/api/terms` | Active T&C version read; admin T&C publishing |
+| `/api/notifications` | User notification list and mark-as-read |
+| `/api/contacto` | Contact form submission |
+| `/api/utils` | Utility endpoints (e.g., backend health ping) |
+
+---
+
+## Database Models
+
+All collections live in a single MongoDB database. Mongoose 8 manages schemas, indexes, and virtuals.
+
+### User
+
+Stores account credentials, profile data, OAuth linkage, health profile, favorites, and ban state.
+
+Key fields: `name`, `email`, `password` (bcrypt-hashed, `select: false`), `role` (`'user'` | `'admin'`), `googleId`, `avatar`, `isVerified`, `isSuperAdmin`, `favoritos` (array of `Recipe` refs), `healthProfile` (`condiciones`, `categorias`, `alergias`, `preferencias`), `baneado`/`baneadoHasta`/`baneadoMotivo`, `termsAccepted`/`termsVersion`, `twoFactorEnabled`, `autoLogoutEnabled`.
+
+### Recipe
+
+Full recipe document with nested nutrition, reviews, and review replies.
+
+Key fields: `nombre`, `desc`, `img`, `cat` (enum: `desayuno` | `almuerzo` | `cena` | `postres-snacks`), `salud` (health tags), `ingredientes`, `pasos`, `nutri` (rich nutritional sub-document with 80+ nutrient fields including macros, vitamins, minerals, amino acids, and fatty acids), `resenas` (nested review array with `estrellas`, `texto`, `likes`, `dislikes`, `respuestas`, and `imagen` with Cloudinary `url`/`publicId`/`estado`), `puntosProm`, `totalResenas`.
+
+Indexes: text index on `nombre` + `desc`, compound indexes on `cat`, `salud`, `createdAt`, and `puntosProm`.
+
+### Consumo
+
+Meal log entry linking a user to a recipe for a specific date and meal type.
+
+Key fields: `userId`, `recetaId`, `recetaSnapshot` (name/image/description snapshot), `tipo` (enum: `desayuno` | `almuerzo` | `cena` | `snack`), `fechaBogota` (YYYY-MM-DD string in Bogotá timezone), `horaBogota` (HH:mm string), `nutri` (Mixed — nutritional snapshot at time of consumption).
+
+Index: `{ userId: 1, fechaBogota: 1 }` for efficient per-user daily queries.
+
+### Notification
+
+In-app notification for a user. Supports `reply` (someone replied to their review), `message` (admin message), and `new_recipe` (new recipe published) types.
+
+Key fields: `userId`, `type`, `leida`, `fromUserId`/`fromUserName`, `recetaId`/`recetaNombre`, `resenaId`, `respuestaId`/`respuestaTexto`, `adminId`/`adminName`/`mensaje`/`asunto`.
+
+Index: `{ userId: 1, leida: 1, createdAt: -1 }` for fast unread-notification fetches.
+
+### AIConfig
+
+Singleton-style collection storing the NutriBot system prompt. Admins update it through the `PanelIA` component. If no document exists, the server falls back to a default prompt that restricts NutriBot to nutritional topics.
+
+Key fields: `prompt` (the full system prompt string sent to Groq with every chat request).
+
+### AdminLog
+
+Immutable audit trail of every admin action.
+
+Key fields: `adminId`, `action` (enum of 20 action types: `DELETE_USER`, `BAN_USER`, `UNBAN_USER`, `CREATE_RECIPE`, `IMPORT_RECIPES`, `EXPORT_RECIPES`, `APPROVE_RESENA`, `REJECT_RESENA_IMAGE`, etc.), `targetUserId`, `metadata` (Mixed — action-specific payload), `ipAddress`, `userAgent`.
+
+Indexes: `{ adminId: 1, createdAt: -1 }`, `{ action: 1, createdAt: -1 }`, `{ createdAt: -1 }`.
+
+### AdminInvitation
+
+Time-limited invitation token allowing a new admin to register with a pre-assigned `admin` role.
+
+Key fields: `email`, `name`, `token`, `invitedBy` (User ref), `expiresAt`, `used`, `usedAt`.
+
+TTL index on `expiresAt` (MongoDB auto-deletes expired documents).
+
+### TermsDocument
+
+Versioned Terms & Conditions content.
+
+Key fields: `version` (semver string, e.g. `"1.0.0"`), `content` (full HTML/markdown text), `publishedAt`, `publishedBy` (User ref).
+
+When a new version is published, all users whose `termsVersion` field differs are prompted to re-accept on their next login.
+
+---
+
+## Third-Party Integrations
+
+### MongoDB Atlas
+The primary data store. The server connects via `MONGO_URI` using Mongoose's `connect()`. On first boot, `seedTerms.js` checks whether the `TermsDocument` collection is empty and inserts an initial document if so.
+
+### Groq AI — LLaMA 3.3 70B
+NutriBot sends the user's message plus the last 10 conversation messages as history to the Groq API using the `groq-sdk` package. The system prompt is loaded from the `AIConfig` collection at request time, allowing admins to update NutriBot's behavior without redeploying.
+
+### Cloudinary
+Recipe review images are uploaded to Cloudinary and stored with a status of `pendiente` until an admin approves or rejects them via the `ImagenesAprobacion` panel. Approved images return a public CDN URL; rejected ones are deleted from Cloudinary using the stored `publicId`.
+
+### Google OAuth via Passport
+`server/config/passport.js` configures `passport-google-oauth20` with `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a callback URL derived from `BACKEND_URL`. The strategy handles three cases: existing Google-linked account (update avatar), existing email-only account (link Google ID), and brand-new account (create user). Google profile photos are upgraded from 96 px to 400 px resolution automatically.
+
+### Nodemailer
+Handles transactional email: password-reset tokens delivered to the user's address, and admin invitation links sent to prospective admins. SMTP credentials are read from `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, and `EMAIL_PASS`.

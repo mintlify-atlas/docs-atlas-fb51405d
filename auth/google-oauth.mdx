@@ -1,0 +1,189 @@
+---
+title: "Set Up Google OAuth Login for HealtyHelp"
+sidebarTitle: "Google OAuth"
+description: "Enable one-click Google sign-in for HealtyHelp using Passport.js, with automatic account linking and optional password setup."
+---
+
+## Overview
+
+HealtyHelp integrates Google OAuth 2.0 via **Passport.js** (`passport-google-oauth20`). Users can sign in with their Google account without creating a password. The server exchanges the Google authorization code for a user profile, finds or creates the matching HealtyHelp account, mints a JWT, and redirects the browser back to the frontend.
+
+---
+
+## The OAuth Flow
+
+```
+Browser                        HealtyHelp API              Google
+  |                                  |                        |
+  |── GET /api/auth/google ─────────>|                        |
+  |                                  |── redirect ───────────>|
+  |                                  |                     (user consents)
+  |                                  |<── auth code ─────────|
+  |                                  |── exchange code ──────>|
+  |                                  |<── profile ───────────|
+  |                                  | (find/create user)     |
+  |<── 302 redirect ─────────────────|                        |
+  |   FRONTEND_URL/google-callback?token=<JWT>
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/auth/google` | Initiates the OAuth flow; redirects the browser to Google's consent screen |
+| `GET` | `/api/auth/google/callback` | Google redirects here after user consents; issues JWT and redirects to frontend |
+
+### Callback redirect format
+
+After a successful login the server issues a `302` redirect to:
+
+```
+{FRONTEND_URL}/google-callback?token=<JWT>
+```
+
+On failure, the user is redirected to:
+
+```
+{FRONTEND_URL}/login?error=auth_failed
+```
+
+### Passport strategy configuration
+
+```js
+// server/config/passport.js
+new GoogleStrategy(
+  {
+    clientID:     process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL:  `${process.env.BACKEND_URL}/api/auth/google/callback`,
+  },
+  async (accessToken, refreshToken, profile, done) => { ... }
+)
+```
+
+The strategy runs through three cases in order:
+
+1. **Existing Google account** (`googleId` match) — updates the user's avatar with Google's latest photo and returns the user.
+2. **Existing email/password account** — links the Google identity to the existing account, marks it as verified, and updates the avatar.
+3. **New user** — creates a fresh account with `isVerified: true` (no email verification required).
+
+---
+
+## Account Linking
+
+If a user previously registered with email/password using the same email address as their Google account, HealtyHelp **automatically links** both identities on the first Google sign-in:
+
+- `googleId` is added to the existing user document.
+- `isVerified` is set to `true` (if it wasn't already).
+- The Google profile photo becomes the user's avatar.
+
+After linking, the user can sign in with either method.
+
+<Note>
+  If a user tries to register with email/password using an email already associated with a Google-only account, they receive an error directing them to use the "Continue with Google" button.
+</Note>
+
+---
+
+## Setting Up Google Cloud Console
+
+<Steps>
+  <Step title="Create a Google Cloud project">
+    Go to [console.cloud.google.com](https://console.cloud.google.com) and create a new project (or select an existing one).
+  </Step>
+
+  <Step title="Enable the Google+ / People API">
+    In the project dashboard, navigate to **APIs & Services → Library**. Search for **"Google People API"** and click **Enable**.
+  </Step>
+
+  <Step title="Configure the OAuth consent screen">
+    Go to **APIs & Services → OAuth consent screen**. Choose **External** and fill in the required fields:
+    - **App name** — e.g. `HealtyHelp`
+    - **User support email** — your support address
+    - **Authorized domains** — your production domain (e.g. `healthyhelpoficial.com`)
+
+    Add the scopes `email` and `profile`, then save.
+  </Step>
+
+  <Step title="Create OAuth 2.0 credentials">
+    Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**. Select **Web application** and fill in:
+
+    - **Name** — e.g. `HealtyHelp Web`
+    - **Authorized JavaScript origins**
+      ```
+      https://api.healthyhelpoficial.com
+      http://localhost:3000
+      ```
+    - **Authorized redirect URIs** (must match `callbackURL` in `passport.js` exactly):
+      ```
+      https://api.healthyhelpoficial.com/api/auth/google/callback
+      http://localhost:3000/api/auth/google/callback
+      ```
+
+    Click **Create**. Copy the **Client ID** and **Client Secret**.
+  </Step>
+
+  <Step title="Add environment variables">
+    Add the credentials to your server `.env` file:
+
+    ```env
+    GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+    GOOGLE_CLIENT_SECRET=your-google-client-secret
+    BACKEND_URL=https://api.healthyhelpoficial.com
+    FRONTEND_URL=https://healthyhelpoficial.com
+    ```
+  </Step>
+
+  <Step title="Restart the server">
+    Restart the HealtyHelp API server. The `/api/auth/google` route is now active.
+  </Step>
+</Steps>
+
+---
+
+## Required Environment Variables
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_CLIENT_ID` | OAuth 2.0 Client ID from Google Cloud Console |
+| `GOOGLE_CLIENT_SECRET` | OAuth 2.0 Client Secret from Google Cloud Console |
+| `BACKEND_URL` | Full URL of the HealtyHelp API (e.g. `https://api.healthyhelpoficial.com`) |
+| `FRONTEND_URL` | Full URL of the frontend app (e.g. `https://healthyhelpoficial.com`) |
+
+---
+
+## The `GoogleCallback` Component
+
+On the frontend, the `/google-callback` route is handled by the `GoogleCallback` React component. It:
+
+1. Reads the `token` query parameter from the URL.
+2. Stores the token in `localStorage`.
+3. Calls `GET /api/auth/me` to fetch the current user.
+4. If the user is a Google-only account (`googleId` set, `hasPassword === false`), displays the **ModalGooglePassword** instead of navigating home.
+5. Otherwise, calls `checkAuth()` and redirects to `/`.
+
+---
+
+## Adding a Password to a Google Account (`ModalGooglePassword`)
+
+Google-only users can optionally set a password so they can also log in with email/password. This is surfaced automatically in the `ModalGooglePassword` component immediately after their first Google sign-in.
+
+**Endpoint:**
+
+```http
+POST /api/auth/set-google-password
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "password": "MyNewP4ss"
+}
+```
+
+The endpoint applies the same [password rules](/auth/overview#password-requirements) as email/password registration (min 8 chars, one lowercase, one uppercase, one digit). On success it returns a fresh JWT.
+
+Constraints enforced server-side:
+- The account **must** have a `googleId` (Google-only accounts only).
+- The account must **not** already have a password set.
+
+After setting a password the user can sign in via either the Google button or email/password.

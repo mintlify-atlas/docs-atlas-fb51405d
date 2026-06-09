@@ -1,0 +1,622 @@
+---
+title: "HealtyHelp Auth API: Register, Login, Profile"
+sidebarTitle: "Auth API"
+description: "Complete reference for HealtyHelp authentication endpoints: registration, login, email verification, password reset, profile management, and Google OAuth."
+---
+
+# Auth API
+
+Base path: `/api/auth`
+
+All protected endpoints require an `Authorization: Bearer <token>` header. Tokens are signed JWTs issued on login, registration verification, and OAuth callbacks.
+
+---
+
+## Authentication & Authorization
+
+The `protect` middleware validates the JWT from the `Authorization` header. If the token is missing, expired, or invalid the request is rejected before reaching the route handler.
+
+| Condition | Status | Error |
+|---|---|---|
+| No `Authorization` header | `401` | `"No autorizado - Token no proporcionado"` |
+| Token expired / invalid signature | `401` | `"Token inválido o expirado"` |
+| User deleted after token issue | `401` | `"Usuario no existe o fue eliminado"` |
+
+---
+
+## The User Object
+
+All authenticated endpoints that return user data include the following shape:
+
+```json
+{
+  "id": "64a1f2c3d4e5f6a7b8c9d0e1",
+  "name": "María García",
+  "email": "maria@example.com",
+  "role": "user",
+  "avatar": "https://res.cloudinary.com/demo/image/upload/v1/avatars/abc123.jpg",
+  "googleId": null,
+  "isVerified": true,
+  "hasPassword": true,
+  "isSuperAdmin": false,
+  "birthDate": "1995-06-15T00:00:00.000Z",
+  "age": 29,
+  "weight": 65.5,
+  "height": 168,
+  "alergia": "lactosa",
+  "termsAccepted": true,
+  "termsVersion": "1.2.0",
+  "profileComplete": true,
+  "activeTermsVersion": "1.2.0",
+  "autoLogoutEnabled": false,
+  "autoLogoutMinutes": 15,
+  "createdAt": "2024-01-10T12:00:00.000Z"
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` | MongoDB ObjectId |
+| `name` | `string` | Display name |
+| `email` | `string` | Unique email address |
+| `role` | `string` | `"user"` or `"admin"` |
+| `avatar` | `string \| null` | Cloudinary URL or `null` |
+| `googleId` | `string \| null` | Google OAuth sub, or `null` for email accounts |
+| `isVerified` | `boolean` | Email has been confirmed |
+| `hasPassword` | `boolean` | Account has a local password (may be absent on some responses) |
+| `isSuperAdmin` | `boolean` | Super-administrator flag |
+| `birthDate` | `string \| null` | ISO 8601 date |
+| `age` | `number \| null` | Computed from `birthDate` |
+| `weight` | `number \| null` | In kilograms |
+| `height` | `number \| null` | In centimeters |
+| `alergia` | `string` | Free-text allergy description |
+| `termsAccepted` | `boolean` | Has accepted current terms |
+| `termsVersion` | `string` | Version of terms accepted |
+| `profileComplete` | `boolean` | `true` when age ≥ 18, weight 40–300 kg, height 50–210 cm are all set |
+| `activeTermsVersion` | `string` | Latest published terms version (returned by `/me`) |
+| `autoLogoutEnabled` | `boolean` | Auto-logout preference |
+| `autoLogoutMinutes` | `number` | Idle timeout in minutes (1–480) |
+| `createdAt` | `string` | ISO 8601 timestamp |
+
+---
+
+## POST /api/auth/register
+
+Creates a new user account and sends a 6-digit email verification code. The account cannot be used until the code is confirmed via [`/verify-email`](#post-apiauthverify-email).
+
+<ParamField body="name" type="string" required>
+  Display name. 2–50 characters, letters only (including accented characters). No three consecutive repeated letters.
+</ParamField>
+
+<ParamField body="email" type="string" required>
+  Email address. Must be unique.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Minimum 8 characters; must contain at least one uppercase letter, one lowercase letter, and one digit.
+</ParamField>
+
+<ParamField body="birthDate" type="string" required>
+  ISO 8601 date string (`YYYY-MM-DD`). User must be at least 18 years old.
+</ParamField>
+
+<ParamField body="weight" type="number">
+  Body weight in kg (40–300). Used to pre-compute `profileComplete`.
+</ParamField>
+
+<ParamField body="height" type="number">
+  Height in cm (50–210). Used to pre-compute `profileComplete`.
+</ParamField>
+
+<ParamField body="alergia" type="string">
+  Free-text allergy description.
+</ParamField>
+
+**Response `201`**
+
+```json
+{
+  "success": true,
+  "needsVerification": true,
+  "email": "maria@example.com",
+  "message": "Cuenta creada. Revisa tu correo para verificar."
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | Name validation failed |
+| `400` | `birthDate` missing or invalid |
+| `400` | User is under 18 |
+| `400` | Email already registered (verified) |
+| `400` | Email already registered but unverified — code is resent, `needsVerification: true` |
+
+**curl example**
+
+```bash
+curl -X POST https://api.healtyhelp.com/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "María García",
+    "email": "maria@example.com",
+    "password": "SecurePass1",
+    "birthDate": "1995-06-15"
+  }'
+```
+
+---
+
+## POST /api/auth/login
+
+Authenticates an existing verified user. Implements progressive account lockout after 5 failed attempts (15-minute lockout). A lockout alert email is sent on the 5th failed attempt.
+
+<ParamField body="email" type="string" required>
+  Registered email address.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Account password.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": { }
+}
+```
+
+`user` contains the [User object](#the-user-object).
+
+**Special case — Google-only account (no local password)**
+
+```json
+{
+  "needsGooglePassword": true,
+  "token": "eyJ...",
+  "user": { },
+  "message": "Esta cuenta fue creada con Google. Crea una contraseña para iniciar sesión también con tu correo."
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `401` | Invalid credentials |
+| `401` | Account not yet verified (`needsVerification: true`, `email` echoed back) |
+| `423` | Account locked; `locked: true`, `lockUntil` (Unix ms) returned |
+
+**curl example**
+
+```bash
+curl -X POST https://api.healtyhelp.com/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "maria@example.com",
+    "password": "SecurePass1"
+  }'
+```
+
+---
+
+## POST /api/auth/verify-email
+
+Validates the 6-digit code sent during registration. On success the account is activated and a JWT is returned immediately so the user is logged in without a second step.
+
+<ParamField body="email" type="string" required>
+  Email address of the account to verify.
+</ParamField>
+
+<ParamField body="code" type="string" required>
+  6-digit verification code from the email. Codes expire after **15 minutes**.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "token": "eyJ...",
+  "user": { }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `email` or `code` missing |
+| `400` | Code invalid or expired |
+
+---
+
+## POST /api/auth/resend-code
+
+Re-generates and sends a fresh verification code. Only works for accounts that are not yet verified.
+
+<ParamField body="email" type="string" required>
+  Email address for the unverified account.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "message": "Código reenviado"
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `404` | User not found |
+| `400` | Account is already verified |
+
+---
+
+## POST /api/auth/forgot-password
+
+Sends a password-reset link to the user's email address. The link is valid for **30 minutes**. For security, a successful response is returned regardless of whether the email exists.
+
+<ParamField body="email" type="string" required>
+  Email address associated with the account.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "message": "Si el correo existe, recibirás un enlace"
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | Account was created via Google and has no password |
+| `500` | Email delivery failed |
+
+---
+
+## PUT /api/auth/reset-password/:token
+
+Sets a new password using the token received via the forgot-password email. Also clears any existing account lockout.
+
+**Path parameter**
+
+| Param | Description |
+|---|---|
+| `token` | Raw (un-hashed) reset token from the email link |
+
+<ParamField body="password" type="string" required>
+  New password. Must meet the same strength requirements as registration.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "token": "eyJ..."
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | Token invalid or expired |
+| `400` | Password does not meet requirements |
+
+---
+
+## GET /api/auth/me
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Returns the full profile of the currently authenticated user, including the latest published terms version for client-side comparison.
+
+**Response `200`**
+
+```json
+{
+  "user": {
+    "id": "64a1f2c3d4e5f6a7b8c9d0e1",
+    "name": "María García",
+    "email": "maria@example.com",
+    "activeTermsVersion": "1.2.0",
+    ...
+  }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `401` | Missing or invalid token |
+| `500` | Server error |
+
+---
+
+## PUT /api/auth/profile
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Updates the authenticated user's profile fields. All body fields are optional; send only the ones to change. If `weight` + already-stored `birthDate` and `height` satisfy the validity constraints, `profileComplete` is automatically set to `true`.
+
+<ParamField body="name" type="string">
+  New display name. Trimmed before saving.
+</ParamField>
+
+<ParamField body="password" type="string">
+  New password. Must meet strength requirements. Not allowed for Google-only accounts.
+</ParamField>
+
+<ParamField body="weight" type="number">
+  Body weight in kg. Will be cast with `parseFloat`.
+</ParamField>
+
+<ParamField body="alergia" type="string">
+  Allergy notes. Trimmed before saving.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "user": { },
+  "message": "Perfil actualizado"
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | Password change attempted on a Google-only account |
+| `400` | New password fails validation |
+| `500` | Save error |
+
+---
+
+## PUT /api/auth/avatar
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Uploads a new avatar image via multipart form data. If the user already has a Cloudinary avatar, the previous image is deleted first.
+
+**Request**
+
+`Content-Type: multipart/form-data`
+
+| Field | Type | Description |
+|---|---|---|
+| `avatar` | `File` | Image file to upload |
+
+**Response `200`**
+
+```json
+{
+  "user": { },
+  "message": "Avatar actualizado"
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | No file received |
+| `500` | Upload or save error |
+
+---
+
+## DELETE /api/auth/avatar
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Removes the user's current avatar from Cloudinary and clears the `avatar` field.
+
+**Response `200`**
+
+```json
+{
+  "message": "Avatar eliminado",
+  "user": { }
+}
+```
+
+---
+
+## DELETE /api/auth/account
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Permanently deletes the authenticated user's account. Cascades to:
+- All `Consumo` documents belonging to the user
+- All review (`resenas`) entries across all `Recipe` documents
+- Cloudinary avatar (if set)
+
+`isSuperAdmin` accounts cannot be deleted.
+
+<ParamField body="confirmacion" type="string" required>
+  Must be the exact string `"ELIMINAR"` to confirm deletion.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "message": "Cuenta eliminada correctamente"
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `confirmacion` is not `"ELIMINAR"` |
+| `403` | Account is a Super Administrator |
+| `404` | User not found |
+
+---
+
+## POST /api/auth/accept-terms
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Records that the user has accepted the currently active terms and conditions. The latest published terms version is looked up server-side and stored on the user document.
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "version": "1.2.0"
+}
+```
+
+---
+
+## POST /api/auth/complete-profile
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Completes the user's health profile. If `birthDate` is provided, it takes priority; otherwise `age` (integer) is used to derive an approximate birth date. Once all constraints are satisfied `profileComplete` is set to `true`.
+
+<ParamField body="birthDate" type="string">
+  ISO 8601 date string. Takes priority over `age` if provided.
+</ParamField>
+
+<ParamField body="age" type="number">
+  Integer age in years. Used only when no `birthDate` is provided and no `birthDate` is already stored. Minimum **18**.
+</ParamField>
+
+<ParamField body="weight" type="number" required>
+  Body weight in kg. Must be between **40 and 300**.
+</ParamField>
+
+<ParamField body="height" type="number" required>
+  Height in cm. Must be between **50 and 210**.
+</ParamField>
+
+<ParamField body="alergia" type="string">
+  Allergy notes. Trimmed before saving.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "user": { }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `birthDate` invalid or in the future |
+| `400` | Neither `birthDate` stored nor valid `age` supplied |
+| `400` | Computed age is under 18 |
+| `400` | `weight` out of range (40–300 kg) |
+| `400` | `height` out of range (50–210 cm) |
+| `404` | User not found |
+
+---
+
+## PATCH /api/auth/preferences
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Updates auto-logout session preferences. At least one field must be provided.
+
+<ParamField body="autoLogoutEnabled" type="boolean">
+  Enable or disable auto-logout on inactivity.
+</ParamField>
+
+<ParamField body="autoLogoutMinutes" type="number">
+  Idle minutes before logout. Must be an integer between **1 and 480**.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "preferences": {
+    "autoLogoutEnabled": true,
+    "autoLogoutMinutes": 30
+  }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `autoLogoutMinutes` not between 1 and 480 |
+| `400` | No valid preferences sent |
+
+---
+
+## GET /api/auth/google
+
+Initiates the Google OAuth 2.0 flow. Redirects the browser to Google's consent screen requesting `profile` and `email` scopes. This is a browser-redirect endpoint, not an API call.
+
+**Flow**
+
+1. Client navigates to `GET /api/auth/google`.
+2. Server redirects to Google.
+3. Google redirects back to `/api/auth/google/callback`.
+4. On success, the server redirects to `{FRONTEND_URL}/google-callback?token=<jwt>`.
+5. On failure, the server redirects to `{FRONTEND_URL}/login?error=auth_failed`.
+
+---
+
+## GET /api/auth/google/callback
+
+Handled internally by Passport.js. On success, issues a JWT and redirects to the frontend. On failure, redirects with `?error=auth_failed`. Do not call this endpoint directly.
+
+---
+
+## POST /api/auth/set-google-password
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Sets a local password on a Google OAuth account that has none. Allows the user to also sign in with email + password. Can only be called once — once a password is set this endpoint returns `400`.
+
+<ParamField body="password" type="string" required>
+  New password. Must meet strength requirements (8+ chars, upper, lower, digit).
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "token": "eyJ...",
+  "user": { }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | Password fails validation |
+| `400` | Account is not a Google account |
+| `400` | Account already has a password |
+| `404` | User not found |

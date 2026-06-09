@@ -1,0 +1,727 @@
+---
+title: "HealtyHelp Recipes API: CRUD and Reviews"
+sidebarTitle: "Recipes API"
+description: "Full reference for HealtyHelp recipe endpoints: listing, detail, admin CRUD, import/export, reviews, votes, and threaded replies."
+---
+
+# Recipes API
+
+Base path: `/api/recipes`
+
+Public read endpoints require no authentication. Admin write endpoints require `Authorization: Bearer <token>` from an account with `role: "admin"`. Review endpoints require any authenticated user token.
+
+---
+
+## The Recipe Object
+
+```json
+{
+  "_id": "64b2a3c4d5e6f7a8b9c0d1e2",
+  "nombre": "Ensalada Mediterránea",
+  "desc": "Fresca ensalada con tomates cherry, aceitunas y queso feta.",
+  "img": "https://res.cloudinary.com/demo/image/upload/v1/recipes/ensalada.jpg",
+  "cat": "almuerzo",
+  "salud": ["sin-gluten", "vegano"],
+  "ingredientes": [
+    "200g tomates cherry",
+    "50g aceitunas negras",
+    "80g queso feta",
+    "2 cucharadas aceite de oliva"
+  ],
+  "pasos": [
+    "Lava y corta los tomates.",
+    "Mezcla todos los ingredientes en un bol.",
+    "Aliña con aceite de oliva y sal."
+  ],
+  "nutri": {
+    "cal": 320,
+    "carb": 12,
+    "gras": 24,
+    "prot": 10,
+    "fiber": 3,
+    "sodio": 480,
+    "azucar": 6,
+    "vitC": 22
+  },
+  "puntosProm": 4.7,
+  "totalResenas": 23,
+  "createdBy": "64a1f2c3d4e5f6a7b8c9d0e1",
+  "createdAt": "2024-03-01T10:00:00.000Z",
+  "updatedAt": "2024-04-15T08:30:00.000Z"
+}
+```
+
+### Core recipe fields
+
+| Field | Type | Description |
+|---|---|---|
+| `_id` | `string` | MongoDB ObjectId |
+| `nombre` | `string` | Recipe name. Max 200 chars. |
+| `desc` | `string` | Description. Max 1000 chars. |
+| `img` | `string` | Cover image URL |
+| `cat` | `string` | One of `desayuno`, `almuerzo`, `cena`, `postres-snacks` |
+| `salud` | `string[]` | Health/dietary tags (free-form strings) |
+| `ingredientes` | `string[]` | Ingredient list |
+| `pasos` | `string[]` | Step-by-step instructions |
+| `nutri` | `object` | Nutritional data (see below) |
+| `puntosProm` | `number` | Average star rating (0–5, one decimal place) |
+| `totalResenas` | `number` | Total review count |
+| `createdBy` | `string` | ObjectId of the admin who created the recipe |
+| `createdAt` | `string` | ISO 8601 timestamp |
+| `updatedAt` | `string` | ISO 8601 timestamp |
+
+### Nutritional schema (`nutri`)
+
+All `nutri` values are numbers defaulting to `0`. Units follow USDA conventions (kcal for energy, grams for macros, mg for minerals and most vitamins, µg where noted).
+
+**Macronutrients & energy**
+
+| Key | Description |
+|---|---|
+| `cal` | Calories (kcal) |
+| `carb` | Total carbohydrates (g) |
+| `carbNetos` | Net carbs (g) |
+| `gras` | Total fat (g) |
+| `prot` | Protein (g) |
+| `fiber` | Dietary fiber (g) |
+
+**Fats breakdown**
+
+| Key | Description |
+|---|---|
+| `grasSat` | Saturated fat (g) |
+| `grasMonoins` | Monounsaturated fat (g) |
+| `grasPoliins` | Polyunsaturated fat (g) |
+| `grasTrans` | Trans fat (g) |
+| `omega3` | Omega-3 (g) |
+| `omega6` | Omega-6 (g) |
+| `ala` | Alpha-linolenic acid (g) |
+| `dha` | DHA (g) |
+| `epa` | EPA (g) |
+| `dpa` | DPA (g) |
+
+**Sugars breakdown**
+
+| Key | Description |
+|---|---|
+| `azucar` | Total sugars (g) |
+| `sacarosa` | Sucrose (g) |
+| `glucosa` | Glucose (g) |
+| `fructosa` | Fructose (g) |
+| `lactosa` | Lactose (g) |
+| `maltosa` | Maltose (g) |
+| `galactosa` | Galactose (g) |
+| `almidon` | Starch (g) |
+
+**Minerals**
+
+| Key | Description |
+|---|---|
+| `sodio` | Sodium (mg) |
+| `colesterol` | Cholesterol (mg) |
+| `calcio` | Calcium (mg) |
+| `hierro` | Iron (mg) |
+| `potasio` | Potassium (mg) |
+| `magnesio` | Magnesium (mg) |
+| `fosforo` | Phosphorus (mg) |
+| `zinc` | Zinc (mg) |
+| `selenio` | Selenium (µg) |
+| `cobre` | Copper (mg) |
+| `manganeso` | Manganese (mg) |
+| `fluor` | Fluoride (mg) |
+
+**Vitamins**
+
+| Key | Description |
+|---|---|
+| `vitC` | Vitamin C (mg) |
+| `vitA` | Vitamin A (µg RAE) |
+| `vitAui` | Vitamin A (IU) |
+| `vitD` | Vitamin D (µg) |
+| `vitDui` | Vitamin D (IU) |
+| `vitD2` | Vitamin D2 (µg) |
+| `vitD3` | Vitamin D3 (µg) |
+| `vitE` | Vitamin E (mg) |
+| `vitK` | Vitamin K (µg) |
+| `vitB6` | Vitamin B6 (mg) |
+| `vitB12` | Vitamin B12 (µg) |
+| `niacina` | Niacin / B3 (mg) |
+| `riboflavina` | Riboflavin / B2 (mg) |
+| `tiamina` | Thiamine / B1 (mg) |
+| `folato` | Folate (µg DFE) |
+| `acidoPant` | Pantothenic acid / B5 (mg) |
+| `retinol` | Retinol (µg) |
+| `betaCaroteno` | Beta-carotene (µg) |
+| `alfaCaroteno` | Alpha-carotene (µg) |
+| `licopeno` | Lycopene (µg) |
+| `colina` | Choline (mg) |
+| `cafeina` | Caffeine (mg) |
+| `teobromina` | Theobromine (mg) |
+
+**Amino acids** (`alanina`, `arginina`, `acidoAsp`, `cistina`, `acidoGlu`, `glicina`, `histidina`, `hidroxiprol`, `isoleucina`, `leucina`, `lisina`, `metionina`, `fenilalanina`, `prolina`, `serina`, `treonina`, `triptofano`, `tirosina`, `valina`) — all in grams.
+
+---
+
+## GET /api/recipes
+
+Returns a paginated list of recipes. Reviews (`resenas`) are excluded from list results.
+
+**Query parameters**
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `page` | `number` | `1` | Page number |
+| `limit` | `number` | `10` | Results per page |
+| `search` | `string` | `""` | Case-insensitive text search against `nombre` and `desc` |
+| `cat` | `string` | `""` | Filter by category: `desayuno`, `almuerzo`, `cena`, `postres-snacks` |
+| `salud` | `string` | `""` | Filter by health tag (exact match) |
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "recipes": [ ],
+  "pagination": {
+    "total": 84,
+    "page": 1,
+    "pages": 9
+  }
+}
+```
+
+---
+
+## GET /api/recipes/:id
+
+Returns the full recipe document including all `resenas` (reviews).
+
+**Path parameter**
+
+| Param | Description |
+|---|---|
+| `id` | Recipe ObjectId |
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "recipe": { }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `404` | Recipe not found |
+
+---
+
+## POST /api/recipes
+
+<Tip>Requires `Authorization: Bearer <token>` with `role: "admin"`</Tip>
+
+Creates a new recipe. Fields `resenas`, `puntosProm`, and `totalResenas` are stripped from the request body if supplied — they are managed by the server.
+
+<ParamField body="nombre" type="string" required>
+  Recipe name. Max 200 characters.
+</ParamField>
+
+<ParamField body="desc" type="string" required>
+  Description. Max 1000 characters.
+</ParamField>
+
+<ParamField body="cat" type="string" required>
+  Category. One of: `desayuno`, `almuerzo`, `cena`, `postres-snacks`.
+</ParamField>
+
+<ParamField body="img" type="string">
+  Cover image URL.
+</ParamField>
+
+<ParamField body="salud" type="string[]">
+  Health/dietary tags, e.g. `["sin-gluten", "vegano"]`.
+</ParamField>
+
+<ParamField body="ingredientes" type="string[]">
+  List of ingredient strings.
+</ParamField>
+
+<ParamField body="pasos" type="string[]">
+  Step-by-step instruction strings.
+</ParamField>
+
+<ParamField body="nutri" type="object">
+  Nutritional data object. All keys optional; unmapped keys default to `0`. See [nutritional schema](#nutritional-schema-nutri) for all fields.
+</ParamField>
+
+**Response `201`**
+
+```json
+{
+  "success": true,
+  "message": "Receta creada correctamente",
+  "recipe": { }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `403` | Caller is not an admin |
+| `500` | Validation or save error |
+
+---
+
+## PUT /api/recipes/:id
+
+<Tip>Requires `Authorization: Bearer <token>` with `role: "admin"`</Tip>
+
+Updates an existing recipe. Accepts the same body fields as [POST /api/recipes](#post-apirecipes). Fields `resenas`, `puntosProm`, and `totalResenas` are stripped.
+
+**Path parameter**
+
+| Param | Description |
+|---|---|
+| `id` | Recipe ObjectId |
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "message": "Receta actualizada correctamente",
+  "recipe": { }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `403` | Caller is not an admin |
+| `404` | Recipe not found |
+| `500` | Validation or save error |
+
+---
+
+## DELETE /api/recipes/:id
+
+<Tip>Requires `Authorization: Bearer <token>` with `role: "admin"`</Tip>
+
+Deletes a recipe and removes any orphaned notifications linked to it.
+
+**Path parameter**
+
+| Param | Description |
+|---|---|
+| `id` | Recipe ObjectId |
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "message": "Receta eliminada correctamente"
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `403` | Caller is not an admin |
+| `404` | Recipe not found |
+
+---
+
+## POST /api/recipes/import
+
+<Tip>Requires `Authorization: Bearer <token>` with `role: "admin"`</Tip>
+
+Bulk-imports an array of recipes. Pass `mode: "replace"` to delete all existing recipes before inserting.
+
+<ParamField body="recipes" type="object[]" required>
+  Array of recipe objects. Each must include at minimum `nombre`, `desc`, and `cat`.
+</ParamField>
+
+<ParamField body="mode" type="string">
+  `"replace"` — delete all existing recipes first. Omit or any other value to append.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "message": "12 recetas importadas",
+  "result": {
+    "created": 12
+  }
+}
+```
+
+In replace mode `result` also contains `"deleted": <count>`.
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `recipes` is not an array |
+| `400` | One or more recipes missing required fields — details array returned |
+
+---
+
+## GET /api/recipes/export/all
+
+<Tip>Requires `Authorization: Bearer <token>` with `role: "admin"`</Tip>
+
+Exports all recipes as JSON (reviews excluded).
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "count": 84,
+  "recipes": [ ]
+}
+```
+
+---
+
+## GET /api/recipes/stats/summary
+
+<Tip>Requires `Authorization: Bearer <token>` with `role: "admin"`</Tip>
+
+Returns aggregate statistics.
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "stats": {
+    "total": 84,
+    "byCategory": [
+      { "_id": "almuerzo", "count": 30 },
+      { "_id": "desayuno", "count": 22 }
+    ],
+    "byHealth": [
+      { "_id": "vegano", "count": 18 },
+      { "_id": "sin-gluten", "count": 14 }
+    ]
+  }
+}
+```
+
+---
+
+## POST /api/recipes/delete-multiple
+
+<Tip>Requires `Authorization: Bearer <token>` with `role: "admin"`</Tip>
+
+Deletes several recipes by ID in a single request.
+
+<ParamField body="ids" type="string[]" required>
+  Array of recipe ObjectIds to delete. Must be a non-empty array.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "message": "5 recetas eliminadas",
+  "deleted": 5
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `ids` is not a non-empty array |
+
+---
+
+## GET /api/recipes/:id/resenas
+
+Returns paginated reviews for a recipe. Calling without authentication returns reviews with `miVoto: null`.
+
+**Query parameters**
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `page` | `number` | `1` | Page number |
+| `limit` | `number` | `5` | Reviews per page |
+| `orden` | `string` | `"reciente"` | `"reciente"` (newest first) or `"relevancia"` (net-likes descending) |
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "puntosProm": 4.7,
+  "totalResenas": 23,
+  "resenas": [
+    {
+      "_id": "64c3b4d5e6f7a8b9c0d1e2f3",
+      "userId": "64a1f2c3d4e5f6a7b8c9d0e1",
+      "userName": "María García",
+      "estrellas": 5,
+      "texto": "¡Deliciosa y muy fácil de preparar!",
+      "createdAt": "2024-04-10T14:00:00.000Z",
+      "updatedAt": "2024-04-10T14:00:00.000Z",
+      "likes": 8,
+      "dislikes": 1,
+      "imagen": { "url": "https://res.cloudinary.com/...", "estado": "aprobada" },
+      "miVoto": "like",
+      "respuestas": [
+        {
+          "_id": "64d4c5d6e7f8a9b0c1d2e3f4",
+          "userId": "64a1f2c3d4e5f6a7b8c9d0e2",
+          "userName": "Chef Admin",
+          "texto": "Gracias por tu reseña!",
+          "createdAt": "2024-04-11T09:00:00.000Z"
+        }
+      ]
+    }
+  ],
+  "pagination": {
+    "total": 23,
+    "page": 1,
+    "pages": 5
+  }
+}
+```
+
+<Note>
+Review images follow an approval flow. A pending image shows `{ url: null, estado: "pendiente" }` only to the review's author; it is invisible to other users until approved.
+</Note>
+
+---
+
+## POST /api/recipes/:id/resenas
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Creates a review for a recipe. One review per user per recipe. Accepts an optional image upload via multipart form; if an image is included, `texto` becomes required. Uploaded images start in `estado: "pendiente"` (moderation queue, ~3 days).
+
+**Request** `Content-Type: multipart/form-data`
+
+<ParamField body="estrellas" type="number" required>
+  Star rating from **1 to 5**.
+</ParamField>
+
+<ParamField body="texto" type="string">
+  Review text. Max 500 characters. Required when an `imagen` file is attached.
+</ParamField>
+
+<ParamField body="imagen" type="File">
+  Optional image attachment. Goes through approval flow.
+</ParamField>
+
+**Response `201`**
+
+```json
+{
+  "success": true,
+  "message": "¡Reseña publicada!",
+  "puntosProm": 4.7,
+  "totalResenas": 24,
+  "resena": { }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `estrellas` out of range 1–5 |
+| `400` | Image attached but `texto` is empty |
+| `400` | User already has a review on this recipe |
+| `404` | Recipe not found |
+
+---
+
+## PUT /api/recipes/:id/resenas
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Edits the authenticated user's existing review for a recipe.
+
+<ParamField body="estrellas" type="number" required>
+  Updated star rating (1–5).
+</ParamField>
+
+<ParamField body="texto" type="string">
+  Updated review text. Max 500 characters.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "message": "Reseña actualizada",
+  "puntosProm": 4.6,
+  "totalResenas": 24,
+  "resena": { }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `estrellas` out of range |
+| `404` | Recipe or review not found |
+
+---
+
+## DELETE /api/recipes/:id/resenas/:resenaId
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Deletes a review. The authenticated user may only delete their own reviews; admins may delete any review. If the review has a Cloudinary image it is also deleted.
+
+**Path parameters**
+
+| Param | Description |
+|---|---|
+| `id` | Recipe ObjectId |
+| `resenaId` | Review ObjectId |
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "message": "Reseña eliminada",
+  "puntosProm": 4.5,
+  "totalResenas": 23
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `403` | Caller is not the author or an admin |
+| `404` | Recipe or review not found |
+
+---
+
+## POST /api/recipes/:id/resenas/:resenaId/voto
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Toggles a like or dislike on a review. Voting the same `tipo` again removes the vote. Switching `tipo` removes the previous vote and adds the new one.
+
+**Path parameters**
+
+| Param | Description |
+|---|---|
+| `id` | Recipe ObjectId |
+| `resenaId` | Review ObjectId |
+
+<ParamField body="tipo" type="string" required>
+  `"like"` or `"dislike"`.
+</ParamField>
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "likes": 9,
+  "dislikes": 1,
+  "miVoto": "like"
+}
+```
+
+`miVoto` is `"like"`, `"dislike"`, or `null` (vote removed).
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `tipo` is not `"like"` or `"dislike"` |
+| `404` | Recipe or review not found |
+
+---
+
+## POST /api/recipes/:id/resenas/:resenaId/respuestas
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Adds a reply to a review. The original review's author receives an in-app notification.
+
+**Path parameters**
+
+| Param | Description |
+|---|---|
+| `id` | Recipe ObjectId |
+| `resenaId` | Review ObjectId |
+
+<ParamField body="texto" type="string" required>
+  Reply text. Max 500 characters.
+</ParamField>
+
+**Response `201`**
+
+```json
+{
+  "success": true,
+  "respuesta": {
+    "_id": "64d4c5d6e7f8a9b0c1d2e3f4",
+    "userId": "64a1f2c3d4e5f6a7b8c9d0e1",
+    "userName": "María García",
+    "texto": "¡Muchas gracias!",
+    "createdAt": "2024-04-11T09:00:00.000Z"
+  }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `texto` missing or empty |
+| `404` | Recipe or review not found |
+
+---
+
+## DELETE /api/recipes/:id/resenas/:resenaId/respuestas/:respId
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Deletes a reply. Users may only delete their own replies; admins may delete any.
+
+**Path parameters**
+
+| Param | Description |
+|---|---|
+| `id` | Recipe ObjectId |
+| `resenaId` | Review ObjectId |
+| `respId` | Reply ObjectId |
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "message": "Respuesta eliminada"
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `403` | Caller is not the reply author or an admin |
+| `404` | Recipe, review, or reply not found |

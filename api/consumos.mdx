@@ -1,0 +1,399 @@
+---
+title: "HealtyHelp Consumption API: Log and Query Meals"
+sidebarTitle: "Consumos API"
+description: "Log meals, track nutrition, and query daily, weekly, or monthly consumption history — all scoped to the authenticated user."
+---
+
+All `/api/consumos` routes require a valid Bearer token in the `Authorization` header. Dates and times are always stored and returned in the **Bogotá timezone (UTC-5)**.
+
+<Note>
+  HealtyHelp stores every date as a plain `YYYY-MM-DD` string and every time as `HH:mm` in **Bogotá time (UTC-5)**. Pass date parameters in this format and interpret all `fechaBogota` / `horaBogota` fields accordingly.
+</Note>
+
+---
+
+## The Consumo object
+
+Every endpoint that returns consumption records uses the following shape:
+
+```json
+{
+  "_id": "664a1b2c3d4e5f6a7b8c9d0e",
+  "userId": "663f0a1b2c3d4e5f6a7b8c9d",
+  "recetaId": "661e0f2a3b4c5d6e7f8a9b0c",
+  "recetaSnapshot": {
+    "nombre": "Avena con frutas",
+    "img": "https://cdn.example.com/avena.jpg",
+    "desc": "Bowl de avena con fresas y arándanos"
+  },
+  "tipo": "desayuno",
+  "fechaBogota": "2024-05-20",
+  "horaBogota": "07:45",
+  "nutri": {
+    "cal": 320,
+    "prot": 12,
+    "carb": 54,
+    "gras": 6
+  },
+  "createdAt": "2024-05-20T12:45:00.000Z",
+  "updatedAt": "2024-05-20T12:45:00.000Z"
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `_id` | string | MongoDB ObjectId of this consumption entry |
+| `userId` | string | ObjectId of the owning user |
+| `recetaId` | string | ObjectId of the logged recipe |
+| `recetaSnapshot.nombre` | string | Recipe name at the time of logging |
+| `recetaSnapshot.img` | string | Recipe image URL at the time of logging |
+| `recetaSnapshot.desc` | string | Recipe short description at the time of logging |
+| `tipo` | string | Meal slot: `desayuno`, `almuerzo`, `cena`, or `snack` |
+| `fechaBogota` | string | Date in Bogotá time — `YYYY-MM-DD` |
+| `horaBogota` | string | Time of logging in Bogotá time — `HH:mm` |
+| `nutri` | object | Nutritional snapshot copied from the recipe at log time (fields vary by recipe) |
+| `createdAt` | string | ISO 8601 UTC timestamp of document creation |
+
+### Meal type auto-detection
+
+When logging via `POST /api/consumos/:recetaId`, the `tipo` is inferred automatically:
+
+| Bogotá hour | Assigned `tipo` |
+|---|---|
+| 06:00 – 11:59 | `desayuno` |
+| 12:00 – 16:59 | `almuerzo` |
+| 17:00 – 05:59 | `cena` |
+| any (recipe category `postres-snacks`) | `snack` |
+
+Snacks are limited to **3 per day**. Main meal slots (`desayuno`, `almuerzo`, `cena`) allow multiple entries per slot per day.
+
+---
+
+## Endpoints
+
+### GET /api/consumos/hoy
+
+Returns all consumption entries logged **today** in Bogotá time, sorted by `horaBogota` ascending.
+
+**Response**
+
+```json
+{
+  "fecha": "2024-05-20",
+  "consumos": [ /* Consumo[] */ ]
+}
+```
+
+<CodeGroup>
+```bash cURL
+curl https://api.healtyhelp.com/api/consumos/hoy \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+---
+
+### GET /api/consumos/dias
+
+Returns a deduplicated, descending-sorted list of every date (`YYYY-MM-DD`) that has at least one consumption record for the authenticated user.
+
+**Response**
+
+```json
+{
+  "dias": ["2024-05-20", "2024-05-19", "2024-05-15"]
+}
+```
+
+<CodeGroup>
+```bash cURL
+curl https://api.healtyhelp.com/api/consumos/dias \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+---
+
+### GET /api/consumos/dia/:fecha
+
+Returns all consumptions for the specified day, sorted by `horaBogota` ascending.
+
+**Path parameter**
+
+<ParamField path="fecha" type="string" required>
+  Target date in `YYYY-MM-DD` format (Bogotá timezone).
+</ParamField>
+
+**Response**
+
+```json
+{
+  "consumos": [ /* Consumo[] */ ]
+}
+```
+
+<CodeGroup>
+```bash cURL
+curl https://api.healtyhelp.com/api/consumos/dia/2024-05-20 \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+---
+
+### GET /api/consumos/semana/:lunes
+
+Returns all consumptions for the 7-day week beginning on the given Monday date.
+
+**Path parameter**
+
+<ParamField path="lunes" type="string" required>
+  Monday date in `YYYY-MM-DD` format. The window spans from this date to the following Sunday (inclusive).
+</ParamField>
+
+**Response**
+
+```json
+{
+  "semana": {
+    "inicio": "2024-05-20",
+    "fin": "2024-05-26"
+  },
+  "consumos": [ /* Consumo[] sorted by fechaBogota, horaBogota */ ]
+}
+```
+
+<CodeGroup>
+```bash cURL
+curl https://api.healtyhelp.com/api/consumos/semana/2024-05-20 \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+---
+
+### GET /api/consumos/mes/:yearMes
+
+Returns all consumptions for the given calendar month.
+
+**Path parameter**
+
+<ParamField path="yearMes" type="string" required>
+  Month in `YYYY-MM` format (e.g. `2024-05`).
+</ParamField>
+
+**Response**
+
+```json
+{
+  "mes": "2024-05",
+  "consumos": [ /* Consumo[] sorted by fechaBogota, horaBogota */ ]
+}
+```
+
+<CodeGroup>
+```bash cURL
+curl https://api.healtyhelp.com/api/consumos/mes/2024-05 \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+---
+
+### GET /api/consumos/receta/:recetaId/hoy
+
+Checks whether a specific recipe has already been logged today, and whether it can still be logged at the current Bogotá hour.
+
+**Path parameter**
+
+<ParamField path="recetaId" type="string" required>
+  MongoDB ObjectId of the recipe to check.
+</ParamField>
+
+**Response**
+
+```json
+{
+  "tipoActual": "almuerzo",
+  "registrado": false,
+  "consumoId": null,
+  "tipo": null,
+  "bloqueado": false,
+  "motivoBloqueado": null
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `tipoActual` | string | Meal slot that would be assigned right now |
+| `registrado` | boolean | `true` if this recipe has already been logged today |
+| `consumoId` | string \| null | ObjectId of the existing entry, or `null` |
+| `tipo` | string \| null | Meal type of the existing entry, or `null` |
+| `bloqueado` | boolean | `true` when the recipe cannot be logged again right now |
+| `motivoBloqueado` | string \| null | Human-readable reason when `bloqueado` is `true` |
+
+---
+
+### POST /api/consumos/:recetaId
+
+Logs a recipe as consumed right now. The `tipo` is inferred automatically from the current Bogotá hour (see auto-detection table above). Pass `tipo` in the request body to override.
+
+**Path parameter**
+
+<ParamField path="recetaId" type="string" required>
+  MongoDB ObjectId of the recipe to log.
+</ParamField>
+
+**Request body**
+
+<ParamField body="tipo" type="string">
+  Override the automatic meal slot: `desayuno`, `almuerzo`, `cena`, or `snack`. If omitted, the slot is inferred from the current hour.
+</ParamField>
+
+**Response** `201 Created`
+
+```json
+{
+  "consumo": { /* Consumo object */ }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `404` | Recipe not found |
+| `409` | Snack limit reached (max 3/day) or duplicate meal slot on the same day |
+
+<CodeGroup>
+```bash cURL
+curl -X POST https://api.healtyhelp.com/api/consumos/661e0f2a3b4c5d6e7f8a9b0c \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "tipo": "almuerzo" }'
+```
+</CodeGroup>
+
+---
+
+### POST /api/consumos/manual
+
+Logs a recipe manually, choosing any meal slot and any past or current date. Useful for retroactively recording meals.
+
+**Request body**
+
+<ParamField body="recetaId" type="string" required>
+  MongoDB ObjectId of the recipe to log.
+</ParamField>
+
+<ParamField body="tipo" type="string" required>
+  Meal slot: `desayuno`, `almuerzo`, `cena`, or `snack`.
+</ParamField>
+
+<ParamField body="fecha" type="string" required>
+  Date in `YYYY-MM-DD` format (Bogotá timezone). Must be a valid calendar date.
+</ParamField>
+
+**Response** `201 Created`
+
+```json
+{
+  "consumo": { /* Consumo object */ }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | Invalid `tipo` or malformed `fecha` |
+| `404` | Recipe not found |
+| `409` | Snack limit reached (max 3/day) |
+
+<CodeGroup>
+```bash cURL
+curl -X POST https://api.healtyhelp.com/api/consumos/manual \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recetaId": "661e0f2a3b4c5d6e7f8a9b0c",
+    "tipo": "cena",
+    "fecha": "2024-05-19"
+  }'
+```
+</CodeGroup>
+
+---
+
+### DELETE /api/consumos/:consumoId
+
+Removes a consumption entry owned by the authenticated user.
+
+**Path parameter**
+
+<ParamField path="consumoId" type="string" required>
+  MongoDB ObjectId of the consumption entry to delete.
+</ParamField>
+
+**Response** `200 OK`
+
+```json
+{ "ok": true }
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | Invalid ObjectId format |
+| `404` | Entry not found or does not belong to the authenticated user |
+
+<CodeGroup>
+```bash cURL
+curl -X DELETE https://api.healtyhelp.com/api/consumos/664a1b2c3d4e5f6a7b8c9d0e \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+---
+
+### PUT /api/consumos/:consumoId/tipo
+
+Updates the meal type of an existing consumption entry. Enforces the same snack cap and duplicate-slot rules as creation.
+
+**Path parameter**
+
+<ParamField path="consumoId" type="string" required>
+  MongoDB ObjectId of the consumption entry to update.
+</ParamField>
+
+**Request body**
+
+<ParamField body="tipo" type="string" required>
+  New meal slot: `desayuno`, `almuerzo`, `cena`, or `snack`.
+</ParamField>
+
+**Response** `200 OK`
+
+```json
+{
+  "consumo": { /* updated Consumo object */ }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `tipo` is not a valid value or ObjectId is malformed |
+| `404` | Entry not found or not owned by the authenticated user |
+| `409` | Changing to `snack` would exceed the 3-per-day cap, or the target meal slot is already occupied for that day |
+
+<CodeGroup>
+```bash cURL
+curl -X PUT https://api.healtyhelp.com/api/consumos/664a1b2c3d4e5f6a7b8c9d0e/tipo \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "tipo": "snack" }'
+```
+</CodeGroup>

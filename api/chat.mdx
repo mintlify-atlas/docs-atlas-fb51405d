@@ -1,0 +1,234 @@
+---
+title: "HealtyHelp Chat API: NutriBot Conversation Endpoints"
+sidebarTitle: "Chat API"
+description: "Send messages to NutriBot, manage your health profile filters, and configure the AI system prompt powering the chat assistant."
+---
+
+The Chat API powers NutriBot, HealtyHelp's conversational nutrition assistant. NutriBot uses **Groq LLaMA 3.3 70B** (`llama-3.3-70b-versatile`) and personalises every response with the authenticated user's health profile, allergies, dietary preferences, and the filtered recipe catalogue.
+
+All routes require a valid Bearer token in the `Authorization` header.
+
+---
+
+## POST /api/chat
+
+Sends a message to NutriBot and receives a reply. The conversation history (up to the last 10 messages) can be provided to maintain context across turns.
+
+**Request body**
+
+<ParamField body="message" type="string" required>
+  The user's message text. Cannot be empty.
+</ParamField>
+
+<ParamField body="history" type="array">
+  Optional array of previous conversation turns. Maximum of 10 entries are used (older entries are silently discarded). Each entry must begin with a `user` message — any leading `model` entries are removed before the request is forwarded to Groq.
+
+  ```json
+  [
+    { "role": "user",  "text": "Qué puedo desayunar hoy?" },
+    { "role": "model", "text": "Te recomiendo avena con fresas..." }
+  ]
+  ```
+</ParamField>
+
+<Note>
+  The `history` array uses `"model"` for the assistant role. Internally, the API maps `"model"` → `"assistant"` when building the Groq request, because the Groq API follows the OpenAI message role convention.
+</Note>
+
+**How personalisation works**
+
+Before calling Groq, the server:
+
+1. Loads the user's `healthProfile` (`condiciones`, `categorias`, `alergias`, `preferencias`) and legacy `alergia` field.
+2. Filters the recipe catalogue to those matching `healthProfile.categorias` (or the full catalogue if none are set).
+3. Removes recipes whose `ingredientes` contain any of the user's allergies.
+4. Injects the filtered recipe list, the user's profile, and a behaviour directive into a system prompt that also includes the active NutriBot prompt from `AIConfig`.
+
+**Response** `200 OK`
+
+```json
+{
+  "reply": "¡Hola, María! Para tu desayuno con diabetes te sugiero la Avena Integral (320 kcal) con índice glucémico bajo..."
+}
+```
+
+<ParamField name="reply" type="string">
+  NutriBot's plain-text response. Returns `"Sin respuesta"` if the Groq API returns an empty completion.
+</ParamField>
+
+**Error responses**
+
+| Status | Body | Condition |
+|---|---|---|
+| `400` | `{ "error": "El mensaje es requerido" }` | `message` field is missing or empty |
+| `429` | `{ "error": "rate_limit", "reply": "Estoy recibiendo muchas consultas..." }` | Groq quota exceeded or upstream 429/503 |
+| `500` | `{ "error": "Error al procesar tu mensaje" }` | Unexpected server-side error |
+
+<CodeGroup>
+```bash cURL — first message
+curl -X POST https://api.healtyhelp.com/api/chat \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Qué puedo cenar hoy con diabetes?"
+  }'
+```
+
+```bash cURL — continuing conversation
+curl -X POST https://api.healtyhelp.com/api/chat \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "¿Tiene mucho sodio?",
+    "history": [
+      { "role": "user",  "text": "Qué puedo cenar hoy con diabetes?" },
+      { "role": "model", "text": "Te recomiendo Pechuga al limón (280 kcal)..." }
+    ]
+  }'
+```
+</CodeGroup>
+
+---
+
+## GET /api/chat/filtros
+
+Returns the full health profile used to personalise chat responses, including allergies and preferences (unlike `GET /api/recomendaciones/filtros`, which intentionally omits those fields).
+
+**Response** `200 OK`
+
+```json
+{
+  "condiciones":  ["diabetes", "hipertension"],
+  "categorias":   ["almuerzo", "cena"],
+  "alergias":     ["maní", "mariscos"],
+  "preferencias": ["alto en proteína"]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `condiciones` | string[] | Active health conditions; drive both chat and recommendations |
+| `categorias` | string[] | Meal category filters; restrict the recipe catalogue shown to NutriBot |
+| `alergias` | string[] | Allergen strings; recipes containing matching ingredients are filtered out before the chat call |
+| `preferencias` | string[] | Free-form dietary preferences; surfaced to NutriBot in the system prompt for context only |
+
+<CodeGroup>
+```bash cURL
+curl https://api.healtyhelp.com/api/chat/filtros \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+---
+
+## PUT /api/chat/health-profile
+
+Updates the authenticated user's health profile. All fields are optional arrays — omit any field to leave it unchanged.
+
+**Request body**
+
+<ParamField body="condiciones" type="string[]">
+  Replace the user's active health condition identifiers. See the [Recommendations API](/api/recommendations#health-condition-identifiers) for the full list of recognised values.
+</ParamField>
+
+<ParamField body="categorias" type="string[]">
+  Replace the active meal category filters used to narrow the recipe catalogue (e.g. `["desayuno", "almuerzo"]`).
+</ParamField>
+
+<ParamField body="alergias" type="string[]">
+  Replace the user's allergen list. Ingredient matching is case-insensitive substring search.
+</ParamField>
+
+<ParamField body="preferencias" type="string[]">
+  Replace the user's free-form dietary preferences (e.g. `["alto en proteína", "sin gluten"]`).
+</ParamField>
+
+**Response** `200 OK`
+
+```json
+{
+  "message": "Perfil actualizado",
+  "healthProfile": {
+    "condiciones":  ["diabetes"],
+    "categorias":   ["almuerzo"],
+    "alergias":     ["maní"],
+    "preferencias": []
+  }
+}
+```
+
+<CodeGroup>
+```bash cURL
+curl -X PUT https://api.healtyhelp.com/api/chat/health-profile \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "condiciones": ["diabetes", "hipertension"],
+    "alergias": ["maní"]
+  }'
+```
+</CodeGroup>
+
+---
+
+## GET /api/chat/prompt
+
+Returns the current NutriBot system prompt stored in `AIConfig`. This is the base behaviour directive injected at the start of every chat completion.
+
+**Response** `200 OK`
+
+```json
+{
+  "prompt": "Eres NutriBot, el asistente de nutrición de HealtyHelp..."
+}
+```
+
+<Note>
+  The prompt is cached in memory for up to 60 seconds. Changes made via `PUT /api/chat/prompt` take effect immediately (cache is invalidated on save), but concurrent server instances may serve the old prompt for up to one minute.
+</Note>
+
+<CodeGroup>
+```bash cURL
+curl https://api.healtyhelp.com/api/chat/prompt \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+---
+
+## PUT /api/chat/prompt
+
+Replaces the NutriBot system prompt. All authenticated users can call this endpoint; restrict access to admin roles at the application level.
+
+**Request body**
+
+<ParamField body="prompt" type="string" required>
+  New system prompt text. Must be a non-empty string.
+</ParamField>
+
+**Response** `200 OK`
+
+```json
+{
+  "message": "Prompt actualizado",
+  "prompt": "Eres NutriBot, el asistente de nutrición de HealtyHelp..."
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | `prompt` is missing, not a string, or blank |
+| `500` | Database write error |
+
+<CodeGroup>
+```bash cURL
+curl -X PUT https://api.healtyhelp.com/api/chat/prompt \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Eres NutriBot, asistente de nutrición de HealtyHelp. Responde siempre en español..."
+  }'
+```
+</CodeGroup>

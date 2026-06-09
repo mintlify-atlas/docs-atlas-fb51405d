@@ -1,0 +1,194 @@
+{
+  "projectType": "saas",
+  "projectName": "HealtyHelp",
+  "projectDescription": "A full-stack healthy eating web app that combines a recipe catalog, AI-powered nutrition chatbot (NutriBot), calorie tracking, personalized recommendations, and an admin panel for managing users, recipes, and moderation.",
+  "theme": "almond",
+  "primaryColor": "#4CAF82",
+  "lightColor": "#E8F5EE",
+  "darkColor": "#1A3D2B",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Guide",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/recipes",
+              "features/nutrition-tracking",
+              "features/chatbot",
+              "features/recommendations",
+              "features/favorites"
+            ]
+          },
+          {
+            "group": "Authentication",
+            "pages": [
+              "auth/overview",
+              "auth/google-oauth",
+              "auth/email-verification"
+            ]
+          },
+          {
+            "group": "Admin Panel",
+            "pages": [
+              "admin/overview",
+              "admin/user-management",
+              "admin/recipe-management",
+              "admin/image-moderation",
+              "admin/terms-and-ai"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/environment-variables",
+              "deployment/setup"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Auth",
+            "pages": [
+              "api/auth"
+            ]
+          },
+          {
+            "group": "Recipes & Favorites",
+            "pages": [
+              "api/recipes",
+              "api/favorites"
+            ]
+          },
+          {
+            "group": "Nutrition & Tracking",
+            "pages": [
+              "api/consumos",
+              "api/recommendations"
+            ]
+          },
+          {
+            "group": "Chat & Notifications",
+            "pages": [
+              "api/chat",
+              "api/notifications"
+            ]
+          },
+          {
+            "group": "Admin",
+            "pages": [
+              "api/admin"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Recipe catalog with health category filtering, full-text search, and detailed nutritional data",
+    "NutriBot — AI chatbot powered by Groq (LLaMA 3.3 70B) that recommends recipes based on user health profile and dietary restrictions",
+    "Daily nutrition tracking with calorie and macro summaries by day, week, and month",
+    "Personalized nutritional recommendations using TDEE/BMR calculations and health conditions",
+    "Favorites system with real-time sync to MongoDB",
+    "Google OAuth and email/password authentication with email verification",
+    "User health profile (conditions, categories, allergies, preferences) that drives AI and recommendations",
+    "Admin dashboard with user management, ban system, recipe CRUD, bulk import/export, review image moderation, and terms management",
+    "PDF export of recipe selections",
+    "Dark mode support",
+    "Rate limiting, XSS sanitization, Helmet security headers, and account lockout protection"
+  ],
+  "publicApiSurface": [
+    "POST /api/auth/register",
+    "POST /api/auth/login",
+    "POST /api/auth/verify-email",
+    "POST /api/auth/resend-code",
+    "POST /api/auth/forgot-password",
+    "PUT /api/auth/reset-password/:token",
+    "GET /api/auth/me",
+    "PUT /api/auth/profile",
+    "PUT /api/auth/avatar",
+    "DELETE /api/auth/avatar",
+    "DELETE /api/auth/account",
+    "POST /api/auth/accept-terms",
+    "POST /api/auth/complete-profile",
+    "PATCH /api/auth/preferences",
+    "GET /api/auth/google",
+    "GET /api/auth/google/callback",
+    "POST /api/auth/set-google-password",
+    "GET /api/recipes",
+    "GET /api/recipes/:id",
+    "POST /api/recipes (admin)",
+    "PUT /api/recipes/:id (admin)",
+    "DELETE /api/recipes/:id (admin)",
+    "POST /api/recipes/import (admin)",
+    "GET /api/recipes/export/all (admin)",
+    "GET /api/recipes/stats/summary (admin)",
+    "POST /api/recipes/delete-multiple (admin)",
+    "GET /api/recipes/:id/resenas",
+    "POST /api/recipes/:id/resenas",
+    "PUT /api/recipes/:id/resenas",
+    "DELETE /api/recipes/:id/resenas/:resenaId",
+    "POST /api/recipes/:id/resenas/:resenaId/voto",
+    "POST /api/recipes/:id/resenas/:resenaId/respuestas",
+    "DELETE /api/recipes/:id/resenas/:resenaId/respuestas/:respId",
+    "GET /api/consumos/hoy",
+    "GET /api/consumos/dias",
+    "GET /api/consumos/dia/:fecha",
+    "GET /api/consumos/semana/:lunes",
+    "GET /api/consumos/mes/:yearMes",
+    "GET /api/consumos/receta/:recetaId/hoy",
+    "POST /api/consumos/:recetaId",
+    "POST /api/consumos/manual",
+    "DELETE /api/consumos/:consumoId",
+    "PUT /api/consumos/:consumoId/tipo",
+    "POST /api/chat",
+    "GET /api/chat/filtros",
+    "PUT /api/chat/health-profile",
+    "GET /api/chat/prompt",
+    "PUT /api/chat/prompt",
+    "GET /api/favoritos",
+    "POST /api/favoritos/:recetaId",
+    "GET /api/recomendaciones",
+    "GET /api/recomendaciones/filtros",
+    "GET /api/notifications",
+    "GET /api/notifications/no-leidas",
+    "PUT /api/notifications/leer-todas",
+    "PUT /api/notifications/:id/leer",
+    "DELETE /api/notifications/:id",
+    "POST /api/notifications/mensaje (admin)",
+    "GET /api/terms",
+    "GET /api/admin/stats",
+    "GET /api/admin/users",
+    "DELETE /api/admin/users/:id",
+    "PUT /api/admin/users/:id/role",
+    "PUT /api/admin/users/:id/ban",
+    "PUT /api/admin/users/:id/unban",
+    "GET /api/admin/users/:id/ban",
+    "GET /api/admin/logs",
+    "POST /api/admin/invite",
+    "GET /api/admin/invitations",
+    "DELETE /api/admin/invitations/:id",
+    "POST /api/admin/accept-invite/:token",
+    "GET /api/admin/imagenes-resenas",
+    "PUT /api/admin/imagenes-resenas/:recipeId/:resenaId/aprobar",
+    "PUT /api/admin/imagenes-resenas/:recipeId/:resenaId/rechazar",
+    "DELETE /api/admin/imagenes-resenas/:recipeId/:resenaId",
+    "DELETE /api/admin/imagenes-resenas/masivo",
+    "GET /api/admin/terms",
+    "PUT /api/admin/terms",
+    "POST /api/contacto",
+    "GET /api/proxy-imagen"
+  ]
+}

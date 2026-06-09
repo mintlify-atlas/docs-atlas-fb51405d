@@ -1,0 +1,199 @@
+---
+title: "HealtyHelp Recommendations API: Personalized Tips"
+sidebarTitle: "Recommendations API"
+description: "Retrieve AI-powered nutrition and exercise recommendations driven by TDEE, 30-day history, and the user's active health conditions."
+---
+
+The Recommendations API generates fully personalized tips by combining the authenticated user's **health profile**, **biometric data** (weight, height, birth date), and **30-day consumption history**. All routes require a valid Bearer token.
+
+<Note>
+  The recommendation engine reads **only** `healthProfile.condiciones` and `healthProfile.categorias`. It does **not** read `alergias` or `preferencias` — those fields are chat-only and have no effect on recommendations.
+</Note>
+
+---
+
+## How the engine works
+
+### TDEE calculation
+
+The engine derives a daily calorie target (TDEE) from the user's `weight` (kg), `height` (cm), and `birthDate` using a gender-neutral Mifflin-St Jeor approximation. The activity factor is inferred from the user's BMI category as a statistical proxy for sedentariness:
+
+| BMI category | Activity factor |
+|---|---|
+| `bajo_peso` (underweight) | 1.45 |
+| `normal` | 1.55 |
+| `sobrepeso` (overweight) | 1.48 |
+| `obesidad` (obese) | 1.375 |
+
+A metabolic aging correction is also applied: −3% after age 40, −7% after age 60.
+
+### 30-day history analysis
+
+The engine queries consumption records from the last 30 days to compute:
+
+- **Daily calorie averages** compared to the calculated TDEE
+- **Average macronutrient intake** (protein, carbs, fat, sodium, fiber, sugar)
+- **Skipped-meal detection** — if a meal type appears on fewer than 50% of logged days, a `comidasSaltadas` warning is generated
+- **Real-time micronutrient alerts** for today's cumulative intake
+
+### Health condition identifiers
+
+The engine recognises the following string identifiers for `healthProfile.condiciones`:
+
+| Identifier | Focus |
+|---|---|
+| `diabetes` | Low-GI foods, carb distribution, insulin sensitivity |
+| `hipertension` | Sodium < 1,500 mg/day, DASH diet, potassium |
+| `bajo-sodio` | Sodium < 1,500 mg/day, label reading |
+| `enfermedad-renal` | Sodium, potassium, phosphorus limits; protein moderation |
+| `colesterol-alto` | Saturated fat < 15 g/day, dietary cholesterol < 200 mg/day |
+| `keto` | Net carbs < 50 g/day, high fat macros |
+| `bajo-carbohidratos` | Total carbs < 100 g/day |
+| `sin-azucar` | Sugar < 10 g/day |
+| `bajo-grasa` | Fat < 50 g/day |
+| `paleo` | Whole foods, no grains or legumes |
+| `vegano` | Plant-only, B12 supplementation, protein combining |
+| `vegetariano` | No meat, adequate B12 and zinc from eggs/dairy |
+| `celiaco` | Strict gluten elimination |
+| `intolerancia-lactosa` | Lactase-friendly substitutes |
+| `gastritis` | Small frequent meals, no fasting > 4 hours |
+| `sindrome-intestino` | Low-FODMAP guidance, stress management |
+| `sin-frutos-secos` | Nut-free label warnings |
+| `sin-mariscos` | Shellfish-free guidance, omega-3 alternatives |
+
+---
+
+## Endpoints
+
+### GET /api/recomendaciones
+
+Generates and returns a full personalised recommendation set for the authenticated user.
+
+**Response**
+
+```json
+{
+  "ok": true,
+  "nombre": "María",
+  "recomendaciones": {
+    "imc": { "valor": 23.4, "categoria": "normal" },
+    "caloriasObjetivo": 1850,
+    "caloriasHoy": 1100,
+    "caloriasRestantes": 750,
+    "progresoHoy": 59,
+    "alertas": [
+      { "tipo": "imc", "mensaje": "Tu IMC es 23.4 (rango saludable)...", "nivel": "ok" },
+      { "tipo": "meta_proteina", "mensaje": "Tu objetivo de proteína diaria es 56g...", "nivel": "info" }
+    ],
+    "alertasHoy": [
+      { "tipo": "sodio_hoy", "mensaje": "Llevas 1600mg de sodio hoy...", "nivel": "advertencia" }
+    ],
+    "contextoHorario": [
+      { "texto": "Aún no registras desayuno...", "nivel": "info" }
+    ],
+    "alimentacion": [
+      "Prioriza alimentos con índice glucémico bajo: avena, lentejas, vegetales sin almidón."
+    ],
+    "ejercicio": [
+      "Caminar 30 minutos después de las comidas principales reduce la glucosa postprandial."
+    ],
+    "ejercicioHoy": [
+      "Tu balance calórico está equilibrado. Mantén tu rutina habitual de actividad física."
+    ],
+    "hidratacion": {
+      "litros": 2.5,
+      "vasos": 10,
+      "nota": "Distribuye el agua a lo largo del día; no la consumas toda de una vez."
+    },
+    "comidasSaltadas": [
+      { "tipo": "desayuno", "mensaje": "Registras desayuno solo el 30% de los días..." }
+    ],
+    "condicionesDetectadas": ["diabetes"],
+    "categoriasActivas": ["almuerzo"],
+    "nutriPromedio": {
+      "calPromedio": 1780,
+      "protPromedio": 62,
+      "carbPromedio": 215,
+      "grasaPromedio": 58,
+      "sodioPromedio": 1820,
+      "fibraPromedio": 18
+    },
+    "macrosHoy": { "carbPct": 52, "protPct": 20, "grasPct": 28 },
+    "coberturaAlimentacion": true,
+    "coberturaEjercicio": true
+  }
+}
+```
+
+#### Response fields
+
+| Field | Type | Description |
+|---|---|---|
+| `ok` | boolean | Always `true` on success |
+| `nombre` | string | Authenticated user's display name |
+| `recomendaciones.imc` | object | BMI value and category (`bajo_peso`, `normal`, `sobrepeso`, `obesidad`) |
+| `recomendaciones.caloriasObjetivo` | number \| null | Calculated TDEE in kcal; `null` if biometrics are missing |
+| `recomendaciones.caloriasHoy` | number | Total kcal logged today |
+| `recomendaciones.caloriasRestantes` | number \| null | Remaining kcal budget for the day |
+| `recomendaciones.progresoHoy` | number | Percentage of TDEE consumed today (capped at 150) |
+| `recomendaciones.alertas` | array | General alerts — BMI, historical calorie/sodium/sugar balance, protein target, condition conflict warnings |
+| `recomendaciones.alertasHoy` | array | Real-time micronutrient alerts based on today's intake |
+| `recomendaciones.contextoHorario` | array | Time-of-day contextual messages (skipped meals, meal timing advice) |
+| `recomendaciones.alimentacion` | array | Deduplicated list of dietary tips driven by conditions and categories |
+| `recomendaciones.ejercicio` | array | Deduplicated list of exercise tips |
+| `recomendaciones.ejercicioHoy` | array | Exercise recommendation calibrated to today's calorie surplus or deficit |
+| `recomendaciones.hidratacion` | object | Daily water target (`litros`, `vasos`, `nota`) |
+| `recomendaciones.comidasSaltadas` | array | Meal types skipped on > 50% of logged days in the last 30 days |
+| `recomendaciones.condicionesDetectadas` | array | Conditions read from `healthProfile.condiciones` |
+| `recomendaciones.categoriasActivas` | array | Categories read from `healthProfile.categorias` |
+| `recomendaciones.nutriPromedio` | object | 30-day daily averages for key nutrients |
+| `recomendaciones.macrosHoy` | object | Today's macronutrient split as percentages of total kcal |
+| `recomendaciones.coberturaAlimentacion` | boolean | `true` if the engine produced at least one dietary tip |
+| `recomendaciones.coberturaEjercicio` | boolean | `true` if the engine produced at least one exercise tip |
+
+#### Alert and message `nivel` values
+
+| `nivel` | Meaning |
+|---|---|
+| `ok` | Within healthy range |
+| `info` | Informational note |
+| `advertencia` | Warning — action suggested |
+| `atencion` | Attention required — clinically relevant |
+
+<CodeGroup>
+```bash cURL
+curl https://api.healtyhelp.com/api/recomendaciones \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+---
+
+### GET /api/recomendaciones/filtros
+
+Returns only the two health-profile fields that drive the recommendation engine. Use this endpoint to read the current active conditions and categories without fetching the full recommendation set.
+
+**Response**
+
+```json
+{
+  "condiciones": ["diabetes", "hipertension"],
+  "categorias": ["almuerzo", "cena"]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `condiciones` | string[] | Active health condition identifiers from `healthProfile.condiciones` |
+| `categorias` | string[] | Active meal category filters from `healthProfile.categorias` |
+
+<Note>
+  This endpoint deliberately omits `alergias` and `preferencias`. Those fields belong exclusively to the NutriBot chat context and do not influence recipe recommendations. Use `GET /api/chat/filtros` to read the full chat health profile.
+</Note>
+
+<CodeGroup>
+```bash cURL
+curl https://api.healtyhelp.com/api/recomendaciones/filtros \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>

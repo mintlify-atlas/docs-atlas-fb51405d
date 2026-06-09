@@ -1,0 +1,274 @@
+---
+title: "NutriBot: AI Nutrition Assistant Powered by Groq"
+sidebarTitle: "NutriBot"
+description: "NutriBot is HealtyHelp's AI nutrition assistant, powered by Groq and LLaMA 3.3 70B. It answers nutrition and recipe questions tailored to your health profile."
+---
+
+# NutriBot — AI Nutrition Assistant
+
+NutriBot is HealtyHelp's built-in conversational assistant. It uses the **Groq SDK** with the **LLaMA 3.3 70B Versatile** model to answer nutrition and recipe questions, always staying within the context of the user's personal health profile and the platform's recipe catalog.
+
+---
+
+## How NutriBot Works
+
+Every time a user sends a message, the server:
+
+1. Fetches the user's `name`, `healthProfile`, and `alergia` fields.
+2. Fetches the full recipe catalog, selecting only `nombre`, `desc`, `cat`, `salud`, `ingredientes`, and core `nutri` fields (`cal`, `prot`, `carb`, `gras`).
+3. Filters recipes by the user's active `categorias` (if any) and then removes any recipe whose ingredients contain an allergen from the combined allergy list.
+4. Assembles a system prompt that includes the configurable base prompt, the filtered recipe list, and the user's full health profile.
+5. Appends the last **10 conversation turns** as chat history (user and assistant roles).
+6. Sends everything to Groq and streams back the response.
+
+---
+
+## AI Model Configuration
+
+| Parameter | Value |
+|---|---|
+| SDK | `groq-sdk` (Node.js) |
+| Model | `llama-3.3-70b-versatile` |
+| `max_tokens` | `1024` |
+| System prompt | Loaded from `AIConfig` MongoDB document (cached for 60 seconds) |
+
+---
+
+## Allergy Filtering
+
+Before the recipe list is sent to the AI, any recipe that contains an allergen in its `ingredientes` array is removed:
+
+```js
+function filtrarPorAlergias(recetas, alergias) {
+  if (!alergias?.length) return recetas;
+  const alergiasNorm = alergias.map(a => a.toLowerCase().trim());
+  return recetas.filter(receta => {
+    const ingredientes = receta.ingredientes ?? [];
+    return !ingredientes.some(ing =>
+      alergiasNorm.some(al => ing.toLowerCase().includes(al))
+    );
+  });
+}
+```
+
+The allergy list is the union of two sources on the User document:
+- `healthProfile.alergias[]` — set via the health profile form
+- `alergia` — the legacy single-value field
+
+NutriBot will never recommend a recipe whose ingredients match any of the user's allergens, because those recipes are removed before the prompt is built.
+
+---
+
+## System Prompt Structure
+
+The system prompt sent to Groq is assembled at request time and includes:
+
+1. **The configurable base prompt** — loaded from the `AIConfig` collection (see [Configuring the AI Prompt](#configuring-the-ai-prompt)).
+2. **The filtered recipe list** — one line per recipe in the format `• Nombre [cat] | Nkcal | desc`.
+3. **The user's health profile** — conditions, active food categories, allergies, and preferences.
+4. **Behavioral rules** — constraining the model to only recommend listed recipes and respect medical conditions.
+
+### Example System Prompt Excerpt
+
+This is the default prompt stored in the `AIConfig` document:
+
+```
+Eres NutriBot, el asistente nutricional de HealtyHelp.
+Solo respondes preguntas sobre nutrición, recetas y alimentación saludable.
+Si el usuario pregunta algo fuera de estos temas, responde amablemente
+que solo puedes ayudar con temas nutricionales.
+Responde en español, de forma clara, amigable y concisa.
+
+RECETAS DISPONIBLES (42 — filtradas por: desayuno):
+• Avena con frutas [desayuno] | 320kcal | Nutritivo desayuno ...
+• Tostadas integrales con aguacate [desayuno] | 280kcal | ...
+...
+
+Perfil de "María":
+- Condiciones / dieta: diabetes, hipertension
+- Tipo de comida activo: desayuno
+- Alergias: maní
+- Preferencias: sin gluten
+
+REGLAS:
+- Recomienda SOLO recetas de la lista anterior. Esa lista ya fue filtrada por alergias del usuario.
+- Nunca inventes recetas que no estén en esa lista.
+- Respeta condiciones médicas.
+- Si el usuario pregunta qué filtros tiene activos, responde exactamente con los valores del perfil de arriba.
+```
+
+The last section of the prompt also instructs the model whether this is the first message of a session (so it greets the user by name once) or a continuation (skip the greeting).
+
+---
+
+## Conversation History
+
+The last **10 messages** from the client-side `history` array are included in each request. Messages with `role: "model"` are mapped to `role: "assistant"` for the Groq API. The history is trimmed to always start with a user turn:
+
+```js
+const chatHistory = history.slice(-10).map(msg => ({
+  role: msg.role === 'model' ? 'assistant' : 'user',
+  content: msg.text,
+}));
+// Ensure the history starts with a user message
+while (chatHistory.length > 0 && chatHistory[0].role !== 'user') {
+  chatHistory.shift();
+}
+```
+
+---
+
+## The Two Chat Interfaces
+
+### Floating Widget (`RobotIA`)
+
+A small robot icon button fixed to the bottom-right corner of every page. Clicking it toggles a compact `ChatCore` panel. From this panel the user can expand to the full chatbot page via an **"Expandir"** button that navigates to `/chatbot`.
+
+```jsx
+// RobotIA.jsx
+<button className="robotBoton" onClick={toggleIA} title="Asistente IA">
+  <IcoRobotBtn />
+</button>
+{activo && (
+  <div className="robotChat">
+    <ChatCore
+      modoExpandido={false}
+      onExpandir={irAChatCompleto}
+      onCerrar={toggleIA}
+      ...
+    />
+  </div>
+)}
+```
+
+### Full Chatbot Page (`VistaChatbot`)
+
+Accessed at `/chatbot`. Features a two-column layout:
+
+- **Left panel** — branding, and a list of NutriBot's topic capabilities (chronic conditions, special diets, adapted recipes, allergies/intolerances, nutritional advice).
+- **Right panel** — full-height `ChatCore` in expanded mode with a "Minimizar" button that returns to the floating widget.
+
+Both interfaces share the same `useChatStore` hook, so the conversation history is preserved when switching between them.
+
+---
+
+## Health Profile Management
+
+Users configure the profile that NutriBot uses via the health profile settings form, which calls:
+
+```bash
+PUT /api/chat/health-profile
+```
+
+**Request body:**
+
+```json
+{
+  "condiciones":  ["diabetes", "hipertension"],
+  "categorias":   ["desayuno", "almuerzo"],
+  "alergias":     ["maní", "gluten"],
+  "preferencias": ["sin lactosa"]
+}
+```
+
+All four fields are arrays of strings. Omitting a field leaves it unchanged.
+
+**Response:**
+
+```json
+{
+  "message": "Perfil actualizado",
+  "healthProfile": {
+    "condiciones":  ["diabetes", "hipertension"],
+    "categorias":   ["desayuno", "almuerzo"],
+    "alergias":     ["maní", "gluten"],
+    "preferencias": ["sin lactosa"]
+  }
+}
+```
+
+To retrieve the current health profile filters:
+
+```bash
+GET /api/chat/filtros
+```
+
+Returns `condiciones`, `categorias`, `alergias`, and `preferencias` arrays.
+
+---
+
+## Configuring the AI Prompt
+
+### Read the current prompt
+
+```bash
+GET /api/chat/prompt
+Authorization: Bearer <token>
+```
+
+```json
+{ "prompt": "Eres NutriBot, el asistente nutricional de HealtyHelp..." }
+```
+
+### Update the prompt (admin only)
+
+```bash
+PUT /api/chat/prompt
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{ "prompt": "Nuevo prompt del sistema..." }
+```
+
+The prompt is stored in the `AIConfig` MongoDB collection (single document) and cached in memory for **60 seconds** (`CONFIG_TTL_MS = 60 * 1000`). Updating the prompt via the API clears the cache immediately (`_configCache = null`).
+
+### `AIConfig` Model
+
+```js
+// server/models/AIConfig.js
+{
+  prompt: {
+    type: String,
+    default: `Eres NutriBot, el asistente nutricional de HealtyHelp.
+Solo respondes preguntas sobre nutrición, recetas y alimentación saludable.
+Si el usuario pregunta algo fuera de estos temas, responde amablemente
+que solo puedes ayudar con temas nutricionales.
+Responde en español, de forma clara, amigable y concisa.`
+  },
+  timestamps: true
+}
+```
+
+---
+
+## Rate Limit Handling
+
+Groq returns HTTP `429` when the API quota is exceeded. The server catches this (and `503`, `500`, `400`, and quota-related error messages) and returns a user-friendly response instead of an error:
+
+```json
+{
+  "error": "rate_limit",
+  "reply": "Estoy recibiendo muchas consultas ahora mismo. Intenta de nuevo en unos segundos."
+}
+```
+
+The client should detect `error === "rate_limit"` and display the `reply` text in the chat bubble rather than throwing an error.
+
+---
+
+## What NutriBot Will and Won't Answer
+
+**NutriBot will help with:**
+- Questions about any recipe in the catalog (ingredients, nutrition, preparation)
+- Recommendations for recipes that fit the user's health profile
+- General nutrition guidance (macros, vitamins, minerals, hydration)
+- Advice tailored to health conditions (diabetes, hypertension, keto, etc.)
+- Clarifying the user's active filters and conditions
+
+**NutriBot will not:**
+- Answer questions outside nutrition, recipes, and healthy eating
+- Invent recipes that are not in the filtered catalog
+- Ignore the user's allergens (allergen-containing recipes are removed before the prompt)
+- Provide specific medical diagnoses or replace professional healthcare advice
+
+If asked about off-topic subjects, NutriBot responds politely that it can only assist with nutritional topics.

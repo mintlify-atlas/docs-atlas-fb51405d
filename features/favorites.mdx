@@ -1,0 +1,203 @@
+---
+title: "Save and Manage Favorite Recipes in HealtyHelp"
+sidebarTitle: "Favorites"
+description: "Save up to 100 favorite recipes in HealtyHelp. Toggle favorites from any recipe card and browse them by category in the dedicated Favorites view."
+---
+
+# Favorites
+
+HealtyHelp lets users bookmark up to **100 recipes** as favorites. Favorites are stored as an array of `ObjectId` references directly on the `User` document, making reads extremely fast. The toggle mechanic means a single endpoint both adds and removes a recipe — no separate "unfavorite" endpoint needed.
+
+---
+
+## How Favorites Are Stored
+
+Favorites live in `user.favoritos: [ObjectId]` on the MongoDB `User` model. The array is queried and mutated directly — no separate collection is involved.
+
+---
+
+## The Toggle Mechanic
+
+`POST /api/favoritos/:recetaId` is an idempotent toggle:
+
+1. If `recetaId` is **not** in `user.favoritos`, it is appended (add).
+2. If `recetaId` **is** already in `user.favoritos`, it is removed with `splice` (remove).
+3. If the user already has **100 favorites**, attempting to add a new one returns `400`.
+
+```js
+// server/routes/favoritos.js
+const idx = user.favoritos.findIndex(id => id.toString() === recetaId);
+
+if (idx === -1) {
+  if (user.favoritos.length >= 100) {
+    return res.status(400).json({ error: 'Límite de favoritos alcanzado' });
+  }
+  user.favoritos.push(recetaId);
+} else {
+  user.favoritos.splice(idx, 1);
+}
+
+await user.save();
+res.json({ favoritos: user.favoritos });
+```
+
+---
+
+## API Endpoints
+
+### Get All Favorites
+
+```bash
+GET /api/favoritos
+Authorization: Bearer <token>
+```
+
+Returns the array of favorited recipe ObjectId strings for the authenticated user:
+
+```json
+{
+  "favoritos": [
+    "6643a1b2c3d4e5f678901234",
+    "6643a1b2c3d4e5f678905678"
+  ]
+}
+```
+
+### Toggle a Favorite
+
+```bash
+POST /api/favoritos/:recetaId
+Authorization: Bearer <token>
+```
+
+No request body required. The `:recetaId` path parameter is the MongoDB ObjectId of the recipe.
+
+**Success response (recipe added):**
+
+```json
+{
+  "favoritos": [
+    "6643a1b2c3d4e5f678901234",
+    "6643a1b2c3d4e5f678905678",
+    "6643a1b2c3d4e5f678909abc"
+  ]
+}
+```
+
+**Success response (recipe removed):**
+
+```json
+{
+  "favoritos": [
+    "6643a1b2c3d4e5f678901234"
+  ]
+}
+```
+
+**Error — 100-item limit reached:**
+
+```json
+{
+  "error": "Límite de favoritos alcanzado"
+}
+```
+
+### cURL Examples
+
+```bash
+# Retrieve favorites
+curl -H "Authorization: Bearer <token>" \
+  https://api.healtyhelp.com/api/favoritos
+
+# Toggle a recipe as favorite (add if absent, remove if present)
+curl -X POST \
+  -H "Authorization: Bearer <token>" \
+  https://api.healtyhelp.com/api/favoritos/6643a1b2c3d4e5f678901234
+```
+
+---
+
+## The 100-Item Hard Limit
+
+The server enforces a maximum of **100 favorites per user**. When the limit is hit and the user tries to add a new recipe, the server returns HTTP `400` with `{ "error": "Límite de favoritos alcanzado" }`.
+
+The front-end heart button should check this error code and show an appropriate toast or inline message rather than treating it as a generic failure.
+
+---
+
+## Optimistic UI Update
+
+The `VistaInicio` home view manages a `favoritos` state array client-side. When the user clicks the heart button on a `TarjetaReceta` card, the `toggleFav` handler is called:
+
+```jsx
+// TarjetaReceta.jsx
+const handleFav = useCallback((e) => {
+  e.stopPropagation();
+  toggleFav(receta._id);
+}, [toggleFav, receta._id]);
+```
+
+The parent component updates its local `favoritos[]` array immediately (optimistic), then syncs with the server in the background. The `esFav` prop passed to each card re-renders the heart icon in filled or outline state without waiting for the round-trip.
+
+---
+
+## The Favorites View (`VistaFavoritos`)
+
+The dedicated `/favoritos` page shows all saved recipes organised in a category-first navigation:
+
+### Category Selection Screen
+
+When no category is selected, the view shows four category cards — **Desayuno**, **Almuerzo**, **Cena**, **Postres & Snacks** — each displaying the number of favorited recipes in that category. Cards with zero recipes are rendered as disabled.
+
+### Recipe Grid (Within a Category)
+
+After selecting a category, the view switches to a recipe grid with:
+
+- **Back button** — returns to the category selection screen
+- **Search bar** — live text search over `nombre` and `desc`, using the same accent-stripping normalisation as the home view
+- **Time filter** — filter by preparation time: `Menos de 15 min` / `15 – 30 min` / `Más de 30 min`
+- **Recipe count badge** — shows total recipes in the selected category
+- **Full `TarjetaReceta` cards** — each card includes the favorite toggle, so users can remove a recipe from favorites directly from this view
+
+### Empty States
+
+| Situation | Message shown |
+|---|---|
+| No favorites at all | "Aún no tienes favoritos" + link to explore recipes |
+| Category has no favorites | "Sin favoritos en [Categoría]" + link to explore |
+| Search/filter returns nothing | "Sin resultados — Intenta con otro término o filtro." |
+
+### Filtering Logic
+
+```js
+// VistaFavoritos.jsx
+const recetasFiltradas = useMemo(() => {
+  if (!categoriaActiva) return [];
+  let lista = recetasFavoritas.filter(r => r.cat === categoriaActiva);
+
+  if (busqueda.trim()) {
+    const b = normalizarTexto(busqueda);
+    lista = lista.filter(r =>
+      normalizarTexto(r.nombre || '').includes(b) ||
+      normalizarTexto(r.desc   || '').includes(b)
+    );
+  }
+
+  if (filtroTiempo) {
+    const t = (r) => r.tiempoMinutos || 0;
+    lista = lista.filter(r =>
+      filtroTiempo === 'menos15' ? (t(r) > 0 && t(r) < 15)   :
+      filtroTiempo === '15a30'   ? (t(r) >= 15 && t(r) <= 30) :
+      filtroTiempo === 'mas30'   ? (t(r) > 30) : true
+    );
+  }
+
+  return lista;
+}, [recetasFavoritas, categoriaActiva, busqueda, filtroTiempo]);
+```
+
+All filtering is client-side — the view receives the full recipe catalog from the parent component and derives `recetasFavoritas` by intersecting it with the `favoritos` ID array.
+
+<Tip>
+  The `VistaFavoritos` component never fetches recipes independently. It receives `recetas` (full catalog) and `favoritos` (array of IDs) as props from the parent, and computes `recetasFavoritas` with `useMemo`. This means favorites are always in sync with the main catalog without extra API calls.
+</Tip>

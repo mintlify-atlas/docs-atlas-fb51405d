@@ -1,0 +1,134 @@
+---
+title: "HealtyHelp Favorites API: Toggle and List"
+sidebarTitle: "Favorites API"
+description: "Reference for HealtyHelp favorites endpoints: list saved recipes and toggle favorites on or off with a single call, capped at 100 items."
+---
+
+# Favorites API
+
+Base path: `/api/favoritos`
+
+All favorites endpoints require authentication. The favorites list is stored as an array of Recipe ObjectIds on the user document. A single toggle endpoint handles both adding and removing a recipe from the list.
+
+<Note>
+  A user's favorites list is capped at **100 recipes**. Attempting to add a 101st item returns a `400` error.
+</Note>
+
+---
+
+## GET /api/favoritos
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Returns the full list of Recipe ObjectIds that the authenticated user has favorited.
+
+**Response `200`**
+
+```json
+{
+  "favoritos": [
+    "64b2a3c4d5e6f7a8b9c0d1e2",
+    "64c3b4d5e6f7a8b9c0d1e2f3",
+    "64d4c5d6e7f8a9b0c1d2e3f4"
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `favoritos` | `string[]` | Array of Recipe ObjectIds in the order they were added |
+
+**curl example**
+
+```bash
+curl -X GET https://api.healtyhelp.com/api/favoritos \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+**Error responses**
+
+| Status | Error | Condition |
+|---|---|---|
+| `401` | `"No autorizado - Token no proporcionado"` | No `Authorization` header |
+| `401` | `"Token inválido o expirado"` | Token expired or signature invalid |
+| `500` | `"Error obteniendo favoritos"` | Unexpected server error |
+
+---
+
+## POST /api/favoritos/:recetaId
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Toggles the given recipe in the authenticated user's favorites list:
+
+- If the recipe is **not** in the list → it is **added**.
+- If the recipe **is already** in the list → it is **removed**.
+
+The updated list is returned after each operation.
+
+**Path parameter**
+
+| Param | Type | Description |
+|---|---|---|
+| `recetaId` | `string` | ObjectId of the recipe to toggle |
+
+**Response `200` — recipe added**
+
+```json
+{
+  "favoritos": [
+    "64b2a3c4d5e6f7a8b9c0d1e2",
+    "64c3b4d5e6f7a8b9c0d1e2f3"
+  ]
+}
+```
+
+**Response `200` — recipe removed**
+
+```json
+{
+  "favoritos": [
+    "64b2a3c4d5e6f7a8b9c0d1e2"
+  ]
+}
+```
+
+**curl example — add a recipe**
+
+```bash
+curl -X POST https://api.healtyhelp.com/api/favoritos/64c3b4d5e6f7a8b9c0d1e2f3 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+**curl example — remove the same recipe (second call)**
+
+```bash
+# Calling the same endpoint a second time removes the recipe
+curl -X POST https://api.healtyhelp.com/api/favoritos/64c3b4d5e6f7a8b9c0d1e2f3 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+**Error responses**
+
+| Status | Error | Condition |
+|---|---|---|
+| `400` | `"Límite de favoritos alcanzado"` | List already contains 100 recipes and this is an add operation |
+| `401` | `"No autorizado - Token no proporcionado"` | Missing token |
+| `401` | `"Token inválido o expirado"` | Invalid or expired token |
+| `500` | `"Error actualizando favorito"` | Unexpected server error |
+
+---
+
+## 100-Item Limit
+
+Each user may save up to **100 recipes** as favorites. The limit is enforced server-side on every add operation. When the limit is reached:
+
+- The `POST /api/favoritos/:recetaId` endpoint returns `400` if the recipe is not yet in the list.
+- **Remove operations are always permitted** regardless of the current list size — the limit only blocks additions.
+- To make room for a new favorite, first remove an existing one with another `POST` call.
+
+```json
+{
+  "error": "Límite de favoritos alcanzado"
+}
+```

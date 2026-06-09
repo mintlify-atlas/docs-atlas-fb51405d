@@ -1,0 +1,273 @@
+---
+title: "Browse and Filter Recipes in HealtyHelp"
+sidebarTitle: "Recipes"
+description: "Explore HealtyHelp's full recipe catalog: search, filter by health condition and category, view nutritional details, and export recipes to PDF."
+---
+
+# Browse and Filter Recipes
+
+HealtyHelp's recipe catalog is the core of the platform. Every recipe is stored in MongoDB and exposed through a paginated REST API. Users can browse by meal category, filter by health condition, run a full-text search, rate recipes with stars, and export a selection to PDF — all from the home view (`VistaInicio`).
+
+---
+
+## Recipe Categories
+
+Every recipe belongs to exactly one of four `cat` values:
+
+| Category | Description |
+|---|---|
+| `desayuno` | Breakfast recipes |
+| `almuerzo` | Lunch recipes |
+| `cena` | Dinner recipes |
+| `postres-snacks` | Desserts and snacks |
+
+These are the only allowed enum values. The API rejects any recipe with a different `cat` value.
+
+---
+
+## MongoDB Schema
+
+### Main Recipe Fields
+
+```js
+// server/models/Recipe.js
+{
+  nombre:       String,       // required, max 200 chars
+  desc:         String,       // required, max 1000 chars
+  img:          String,       // Cloudinary URL
+  cat:          String,       // enum: desayuno | almuerzo | cena | postres-snacks
+  salud:        [String],     // health tags, e.g. ["diabetes", "hipertension"]
+  ingredientes: [String],
+  pasos:        [String],
+  resenas:      [resenaSchema],
+  puntosProm:   Number,       // auto-calculated weighted average (0–5)
+  totalResenas: Number,       // auto-calculated count
+  nutri:        nutriSchema,  // full nutritional breakdown (see below)
+  createdBy:    ObjectId,     // ref: User
+}
+```
+
+### `nutri` Sub-schema — Full Nutritional Breakdown
+
+The `nutri` embedded document contains over 80 fields covering every major nutrient. Key fields:
+
+| Field | Unit | Description |
+|---|---|---|
+| `cal` | kcal | Calories |
+| `carb` | g | Total carbohydrates |
+| `carbNetos` | g | Net carbs (carb − fiber) |
+| `gras` | g | Total fat |
+| `prot` | g | Protein |
+| `fiber` | g | Dietary fiber |
+| `sodio` | mg | Sodium |
+| `colesterol` | mg | Cholesterol |
+| `azucar` | g | Total sugar |
+| `grasSat` | g | Saturated fat |
+| `grasMonoins` | g | Monounsaturated fat |
+| `grasPoliins` | g | Polyunsaturated fat |
+| `grasTrans` | g | Trans fat |
+| `omega3` / `omega6` | g | Omega fatty acids |
+| `vitA`, `vitC`, `vitD`, `vitE`, `vitK` | µg / mg | Fat-soluble vitamins |
+| `vitB6`, `vitB12`, `folato`, `niacina`, `tiamina`, `riboflavina` | mg / µg | B-vitamins |
+| `calcio`, `hierro`, `potasio`, `magnesio`, `fosforo`, `zinc` | mg | Minerals |
+| `alanina` … `valina` | g | Individual amino acids |
+
+All nutritional fields default to `0`. The complete list of 80+ fields is defined in `nutriSchema` in `server/models/Recipe.js`.
+
+### Database Indexes
+
+```
+{ nombre: 'text', desc: 'text' }   // full-text search
+{ cat: 1 }
+{ salud: 1 }
+{ createdAt: -1 }
+{ puntosProm: -1 }
+```
+
+---
+
+## The Recipe Card (`TarjetaReceta`)
+
+Each recipe is rendered as a card in the `TarjetaReceta` component. The card surface displays:
+
+- **Image** — lazy-loaded from Cloudinary with an optional cost-per-serving badge
+- **Name** (`nombre`) and short description (`desc`)
+- **Star rating** — rounded average `puntosProm` out of 5, next to `totalResenas` review count
+- **Preparation time** — `tiempoMinutos` shown as `N min` (or `Xh Ymin` for ≥ 60)
+- **Favorite button** — heart icon that calls `toggleFav`
+- **PDF selector button** — check/PDF icon that adds the recipe to the current PDF export selection
+
+Clicking the card body opens the **Detail View** (`DetalleReceta`) as an overlay, which shows the full ingredient list, step-by-step instructions, and links to the full nutritional modal (`ModalNutricionDetallada`).
+
+---
+
+## Search
+
+Search is performed **client-side** after all recipes are loaded. The `normalizarTexto` function normalises the query before comparison:
+
+```js
+const normalizarTexto = (texto) =>
+  texto
+    ? texto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    : '';
+```
+
+<Tip>
+  The search strips Unicode combining characters (accents) using NFD normalisation, so searching for `receta` matches `réceta`, and `jalapeno` matches `jalapeño`. Both the query and the recipe fields (`nombre`, `desc`) are normalised before comparison.
+</Tip>
+
+---
+
+## Filters
+
+### Category Filter
+
+The category pill bar lets users switch between `todas` (show all) and any single category (`desayuno`, `almuerzo`, `cena`, `postres-snacks`). Selecting a category sets the `categoria` state; selecting "todas" clears it.
+
+### Health Condition Filter (`salud`)
+
+The drawer opened by the filter button (`FiltrosSalud`) lets users toggle one or more health tags. The active filter list is stored in `filtros[]`. A recipe matches only when **every** selected tag is present in its `salud` array:
+
+```js
+const okSalud =
+  filtros.length === 0 ||
+  filtros.every(f => (r.salud || []).includes(f));
+```
+
+Health condition values used by the recommendation engine (and available as `salud` tags on recipes):
+
+`diabetes` · `hipertension` · `bajo-sodio` · `enfermedad-renal` · `colesterol-alto` · `keto` · `bajo-carbohidratos` · `sin-azucar` · `bajo-grasa` · `celiaco` · `intolerancia-lactosa` · `vegano` · `vegetariano` · `paleo` · `sin-frutos-secos` · `sin-mariscos` · `gastritis` · `sindrome-intestino`
+
+### Preparation Time Filter
+
+| Filter ID | Condition |
+|---|---|
+| `menos15` | `tiempoMinutos > 0 && tiempoMinutos < 15` |
+| `15a30` | `tiempoMinutos >= 15 && tiempoMinutos <= 30` |
+| `mas30` | `tiempoMinutos > 30` |
+
+All active filters (category, health tags, time, search) are applied together with AND logic on the client-side `recetasFiltradas` memo.
+
+---
+
+## API Endpoints
+
+### List Recipes
+
+```
+GET /api/recipes
+```
+
+**Query parameters:**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `page` | `1` | Page number |
+| `limit` | `10` | Results per page |
+| `search` | `""` | Regex search on `nombre` and `desc` (server-side) |
+| `cat` | `""` | Filter by category |
+| `salud` | `""` | Filter by a single health tag |
+
+The response excludes the `resenas` array for performance:
+
+```json
+{
+  "success": true,
+  "recipes": [...],
+  "pagination": {
+    "total": 120,
+    "page": 1,
+    "pages": 12
+  }
+}
+```
+
+<Note>
+  The home view (`VistaInicio`) fetches **all** recipes in one request using `limit=200` (the app-level default) so that all client-side filtering works on the full dataset without additional round-trips.
+</Note>
+
+### Get Recipe by ID
+
+```
+GET /api/recipes/:id
+```
+
+Returns the full recipe document including `resenas` and `nutri`.
+
+---
+
+## Reviews and Ratings (`resenas`)
+
+### Review Schema
+
+```js
+{
+  userId:     ObjectId,   // ref: User
+  userName:   String,
+  estrellas:  Number,     // 1–5, required
+  texto:      String,     // max 500 chars
+  likes:      [ObjectId], // users who voted helpful
+  dislikes:   [ObjectId], // users who voted not helpful
+  respuestas: [{ userId, userName, texto, timestamps }],
+  imagen: {
+    url:     String,      // Cloudinary public URL (null until approved)
+    publicId:String,
+    estado:  'pendiente' | 'aprobada' | 'rechazada'
+  },
+  timestamps: true
+}
+```
+
+### Rating Calculation
+
+The `recalcularPuntos` method is called automatically after every create/edit/delete:
+
+```js
+recipeSchema.methods.recalcularPuntos = function () {
+  const total = this.resenas.length;
+  if (total === 0) {
+    this.puntosProm = 0;
+    this.totalResenas = 0;
+  } else {
+    const suma = this.resenas.reduce((acc, r) => acc + r.estrellas, 0);
+    this.puntosProm   = Math.round((suma / total) * 10) / 10;
+    this.totalResenas = total;
+  }
+};
+```
+
+### Review Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/recipes/:id/resenas` | Paginated reviews (`limit=5`). Sort by `reciente` (default) or `relevancia` (likes − dislikes). |
+| `POST` | `/api/recipes/:id/resenas` | Create a review. One review per user per recipe. Optional image attachment (goes into `pendiente` state). |
+| `PUT` | `/api/recipes/:id/resenas` | Edit own review (stars + text). |
+| `DELETE` | `/api/recipes/:id/resenas/:resenaId` | Delete own review (or any review if admin). |
+| `POST` | `/api/recipes/:id/resenas/:resenaId/votar` | Toggle `like` or `dislike`. |
+| `POST` | `/api/recipes/:id/resenas/:resenaId/respuestas` | Add a nested reply. Triggers a notification to the review author. |
+| `DELETE` | `/api/recipes/:id/resenas/:resenaId/respuestas/:respId` | Delete a reply. |
+
+---
+
+## PDF Export
+
+When one or more recipe cards are selected (via the PDF selector button), a floating **"Descargar PDF"** button appears. Clicking it calls `generarPDFRecetas` with the filtered array of selected recipe objects. The selection is cleared after the PDF is generated.
+
+```jsx
+// Only selected recipes are passed to the PDF utility
+await generarPDFRecetas(recetas.filter(r => seleccionadas.includes(r._id)));
+setSeleccionadas([]);
+```
+
+---
+
+## Pagination (API)
+
+The API supports server-side pagination via `page` and `limit` query parameters. The default `limit` from the server controller is `10`, but the home view sends `limit=200` to load the full catalog for client-side filtering. Large deployments should consider reducing this value and moving filtering server-side.
+
+```bash
+# Fetch page 2 with 20 results filtered to dinner recipes
+curl -H "Authorization: Bearer <token>" \
+  "https://api.healtyhelp.com/api/recipes?page=2&limit=20&cat=cena"
+```

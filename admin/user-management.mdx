@@ -1,0 +1,239 @@
+---
+title: "Manage Users, Roles, and Bans in HealtyHelp"
+sidebarTitle: "User Management"
+description: "API reference for listing, deleting, promoting, and banning HealtyHelp users from the admin panel, including ban fields and login behavior."
+---
+
+All user-management endpoints are under `/api/admin/` and require a valid JWT belonging to a user with `role: "admin"`.
+
+## List All Users
+
+Returns every registered user sorted by registration date (newest first). The response omits password hashes.
+
+```bash
+GET /api/admin/users
+Authorization: Bearer <admin_token>
+```
+
+```json
+{
+  "success": true,
+  "count": 3,
+  "users": [
+    {
+      "_id": "665f001122334455aabbcc01",
+      "name": "Jane Doe",
+      "email": "jane@example.com",
+      "role": "user",
+      "avatar": "https://...",
+      "googleId": null,
+      "createdAt": "2025-05-01T08:00:00.000Z",
+      "isSuperAdmin": false,
+      "baneado": false,
+      "baneadoHasta": null,
+      "baneadoMotivo": "",
+      "baneadoEn": null
+    }
+  ]
+}
+```
+
+The `UserList` component in the dashboard renders this list as a responsive table (desktop) or card stack (mobile) with inline role selectors, ban/unban buttons, and a direct-message button.
+
+---
+
+## Delete a User
+
+```bash
+DELETE /api/admin/users/:id
+Authorization: Bearer <admin_token>
+```
+
+**Server-side guards:**
+
+| Condition | HTTP response |
+|---|---|
+| Target user is SuperAdmin | `403` — cannot be deleted under any circumstance |
+| Admin deleting themselves | `400` — self-deletion not allowed |
+| Non-SuperAdmin deleting another admin | `403` — only SuperAdmin may delete admins |
+
+On success the user document is removed with `deleteOne()` and the action is written to the audit log.
+
+```json
+// 200
+{
+  "success": true,
+  "message": "Usuario Jane Doe eliminado correctamente"
+}
+```
+
+<Note>
+  The `deleteOne()` call does not cascade automatically. Any `Consumo` records, recipe review entries, or notifications referencing the deleted user ID will remain orphaned in the database. Clean these up separately if needed.
+</Note>
+
+---
+
+## Promote or Demote a User
+
+Change a user's role between `"user"` and `"admin"`.
+
+```bash
+PUT /api/admin/users/:id/role
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "role": "admin"
+}
+```
+
+**Accepted values:** `"user"` | `"admin"` — any other value returns `400`.
+
+**Permission matrix:**
+
+| Requesting admin | Target is SuperAdmin | Target is Admin | Target is User |
+|---|---|---|---|
+| Regular admin | ✗ (403) | ✗ (403) | Can demote/promote to user only |
+| SuperAdmin | ✗ (403) | Can demote to user | Can promote to admin |
+
+```json
+// 200
+{
+  "success": true,
+  "message": "Rol de Jane Doe actualizado a admin",
+  "user": {
+    "_id": "665f...",
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "role": "admin"
+  }
+}
+```
+
+---
+
+## Ban a User
+
+Temporarily or permanently prevent a user from logging in.
+
+```bash
+PUT /api/admin/users/:id/ban
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "motivo": "Posting spam content",
+  "dias": 7
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `motivo` | `string` (optional) | Human-readable reason for the ban |
+| `dias` | `number \| null` | Days until the ban expires. Pass `null` for a **permanent ban** |
+
+**Server-side guards:**
+
+- Cannot ban yourself.
+- Cannot ban the SuperAdmin.
+- Regular admins cannot ban other admins (SuperAdmin only).
+
+**Example — temporary ban (7 days):**
+
+```json
+// Request body
+{ "motivo": "Posting spam content", "dias": 7 }
+
+// 200 response
+{
+  "success": true,
+  "message": "Usuario baneado por 7 días",
+  "baneadoHasta": "2025-06-21T10:00:00.000Z"
+}
+```
+
+**Example — permanent ban:**
+
+```json
+// Request body
+{ "motivo": "Repeated policy violations", "dias": null }
+
+// 200 response
+{
+  "success": true,
+  "message": "Usuario baneado permanentemente",
+  "baneadoHasta": null
+}
+```
+
+### Ban fields on the User document
+
+When a user is banned, five fields are written to their document:
+
+| Field | Type | Description |
+|---|---|---|
+| `baneado` | `Boolean` | `true` while the ban is active |
+| `baneadoHasta` | `Date \| null` | Expiry date; `null` means permanent |
+| `baneadoMotivo` | `String` | Reason supplied by the admin |
+| `baneadoPor` | `ObjectId` | Reference to the admin who issued the ban |
+| `baneadoEn` | `Date` | Timestamp when the ban was applied |
+
+### Effect on login
+
+When the auth middleware validates a token, it fetches the user document fresh from the database on every request (including the `baneado` fields). The client reads the `baneado` and `baneadoHasta` values from the user profile returned at login. If `baneado` is `true` and the ban has not expired, the frontend displays a ban notice and prevents further interaction.
+
+---
+
+## Unban a User
+
+```bash
+PUT /api/admin/users/:id/unban
+Authorization: Bearer <admin_token>
+```
+
+Clears all five ban fields:
+
+```json
+{
+  "success": true,
+  "message": "Usuario desbaneado correctamente"
+}
+```
+
+---
+
+## Get Ban Status
+
+```bash
+GET /api/admin/users/:id/ban
+Authorization: Bearer <admin_token>
+```
+
+```json
+{
+  "success": true,
+  "ban": {
+    "baneado": true,
+    "baneadoHasta": "2025-06-21T10:00:00.000Z",
+    "baneadoMotivo": "Posting spam content",
+    "baneadoEn": "2025-06-14T10:00:00.000Z",
+    "permanente": false
+  }
+}
+```
+
+`permanente` is a derived field: `true` when `baneado === true && baneadoHasta === null`.
+
+---
+
+## User List UI Capabilities
+
+The `UserList` component (`client/src/components/admin/UserList.jsx`) provides:
+
+- **Search** by name or email (client-side filter).
+- **Role filter** — all / admins only / users only.
+- **CSV export** of the current filtered view.
+- **Inline role selector** — only visible when `canModify` returns `true` for that row.
+- **Ban / Unban button** — opens a modal (`ModalBaneo`) with duration presets (1, 3, 7, 14, 30, 90 days) or a custom number of days, plus a permanent option.
+- **Send message** button — opens `ModalMensaje` to push a notification to the user.
+- SuperAdmin and self rows are shown as read-only with a lock icon instead of action buttons.

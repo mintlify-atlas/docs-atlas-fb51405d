@@ -1,47 +1,232 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with HealtyHelp in 10 Minutes"
+sidebarTitle: "Quickstart"
+description: "Step-by-step guide to running HealtyHelp locally: clone the repo, configure environment variables, start both servers, and create the first admin account."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
+This guide walks you through cloning HealtyHelp, wiring up all required services, and reaching a fully working local instance with an admin account ready to use.
 
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+<Note>
+  The Express server enforces two rate-limit tiers in production: **500 requests per 15 minutes** for all `/api/*` routes, and a stricter **20 requests per 15 minutes** specifically on `/api/auth/login`. In development mode the login limit is relaxed to 200 requests per 15 minutes. Keep this in mind when running automated tests or scripts against the local server.
+</Note>
 
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+---
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
 
+  <Step title="Prerequisites">
+    Make sure the following are available on your machine before you begin:
+
+    | Requirement | Notes |
+    |---|---|
+    | **Node.js 18+** | Required by both client and server. Check with `node -v`. |
+    | **MongoDB** | [MongoDB Atlas](https://www.mongodb.com/atlas) free tier works out of the box, or run a local `mongod` instance. |
+    | **Groq API key** | Register at [console.groq.com](https://console.groq.com) and create a key. Used to power NutriBot with LLaMA 3.3 70B. |
+    | **Google OAuth credentials** *(optional)* | Required only if you want Google Sign-In. Create an OAuth 2.0 client in the [Google Cloud Console](https://console.cloud.google.com). |
+    | **Cloudinary account** *(optional)* | Required only if you want image upload and moderation for recipe reviews. Register at [cloudinary.com](https://cloudinary.com). |
+    | **SMTP credentials** *(optional)* | Required for password-reset emails and admin invitation emails via Nodemailer. |
+  </Step>
+
+  <Step title="Clone the Repository">
     ```bash
-    npm install your-package
+    git clone https://github.com/JuanSebasSV/healtyhelp.git
+    cd healtyhelp
+    ```
+
+    The repository uses a monorepo layout:
+
+    ```
+    healtyhelp/
+    ├── client/   ← React 19 + Vite frontend
+    └── server/   ← Express 5 + MongoDB backend
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Install Server Dependencies">
+    ```bash
+    cd server
+    npm install
+    ```
+
+    This installs Express 5, Mongoose, Groq SDK, Passport, Cloudinary, Helmet, and all other backend packages defined in `server/package.json`.
+  </Step>
+
+  <Step title="Install Client Dependencies">
+    ```bash
+    cd ../client
+    npm install
+    ```
+
+    This installs React 19, React Router v7, Axios, jsPDF, react-toastify, and the Vite build toolchain.
+  </Step>
+
+  <Step title="Configure Server Environment Variables">
+    Create a `.env` file in the `server/` directory. The table below covers every variable the server reads:
 
     ```bash
-    your-cli init
+    # server/.env
+
+    # ── MongoDB ────────────────────────────────────────────────────────────────
+    MONGO_URI=mongodb+srv://<user>:<password>@cluster0.mongodb.net/healtyhelp?retryWrites=true&w=majority
+
+    # ── JWT ───────────────────────────────────────────────────────────────────
+    JWT_SECRET=your-very-long-random-secret-string
+    JWT_EXPIRE=7d
+
+    # ── Groq AI (NutriBot) ────────────────────────────────────────────────────
+    GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+    # ── CORS / URLs ───────────────────────────────────────────────────────────
+    FRONTEND_URL=http://localhost:5173
+    BACKEND_URL=http://localhost:5000
+    PORT=5000
+
+    # ── Google OAuth (optional) ───────────────────────────────────────────────
+    GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
+    GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxx
+
+    # ── Cloudinary (optional, image uploads) ─────────────────────────────────
+    CLOUDINARY_CLOUD_NAME=your-cloud-name
+    CLOUDINARY_API_KEY=000000000000000
+    CLOUDINARY_API_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+    # ── Nodemailer / Email (optional) ─────────────────────────────────────────
+    EMAIL_HOST=smtp.gmail.com
+    EMAIL_PORT=587
+    EMAIL_USER=you@gmail.com
+    EMAIL_PASS=your-app-password
+
+    # ── Super-admin bootstrap (used by scripts/initSuperAdmin.js) ────────────
+    SUPER_ADMIN_NAME=Admin
+    SUPER_ADMIN_EMAIL=admin@example.com
+    SUPER_ADMIN_PASSWORD=ChangeMe123!
+
+    # ── Runtime mode ──────────────────────────────────────────────────────────
+    NODE_ENV=development
     ```
+
+    **Variable reference:**
+
+    | Variable | Required | Description |
+    |---|---|---|
+    | `MONGO_URI` | ✅ | MongoDB connection string. Atlas or local (`mongodb://localhost:27017/healtyhelp`). |
+    | `JWT_SECRET` | ✅ | Secret key used to sign and verify JWTs. Use a random string of at least 32 characters. |
+    | `JWT_EXPIRE` | ✅ | Token lifetime passed to `jsonwebtoken` (e.g. `7d`, `24h`). |
+    | `GROQ_API_KEY` | ✅ | API key from [console.groq.com](https://console.groq.com). Enables NutriBot. |
+    | `FRONTEND_URL` | ✅ | Origin allowed by the CORS policy. Must match exactly where the Vite dev server runs. |
+    | `BACKEND_URL` | ✅ | Full URL of the Express server. Used by Passport as the Google OAuth callback base. |
+    | `PORT` | ✅ | Port the Express server listens on. Defaults to `5000` if unset. |
+    | `GOOGLE_CLIENT_ID` | Optional | Google OAuth 2.0 client ID. Required for Google Sign-In. |
+    | `GOOGLE_CLIENT_SECRET` | Optional | Google OAuth 2.0 client secret. Required for Google Sign-In. |
+    | `CLOUDINARY_CLOUD_NAME` | Optional | Cloudinary cloud name for image uploads. |
+    | `CLOUDINARY_API_KEY` | Optional | Cloudinary API key. |
+    | `CLOUDINARY_API_SECRET` | Optional | Cloudinary API secret. |
+    | `EMAIL_HOST` | Optional | SMTP host for Nodemailer (password resets, invitations). |
+    | `EMAIL_PORT` | Optional | SMTP port (typically `587` for TLS). |
+    | `EMAIL_USER` | Optional | SMTP username / sender address. |
+    | `EMAIL_PASS` | Optional | SMTP password or app-specific password. |
+    | `SUPER_ADMIN_EMAIL` | Optional | Email for the initial super-admin account (used by `initSuperAdmin.js`). |
+    | `SUPER_ADMIN_PASSWORD` | Optional | Password for the initial super-admin account. Change immediately after first login. |
+    | `SUPER_ADMIN_NAME` | Optional | Display name for the initial super-admin account. |
+    | `NODE_ENV` | Optional | Set to `production` to enable strict rate limiting (20 login attempts/15 min). |
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Configure Client Environment Variables">
+    Create a `.env` file in the `client/` directory:
 
     ```bash
-    your-cli start
+    # client/.env
+    VITE_API_URL=http://localhost:5000/api
+    ```
+
+    `VITE_API_URL` is the base URL that Axios uses for every API request. It must point to the running Express server. The variable is prefixed with `VITE_` so that Vite exposes it to the browser bundle at build time via `import.meta.env.VITE_API_URL`.
+  </Step>
+
+  <Step title="Start the Server">
+    From the `server/` directory:
+
+    ```bash
+    npm run dev
+    ```
+
+    This runs `nodemon server.js`, which watches for file changes and auto-restarts. On startup you should see:
+
+    ```
+    ✅ MongoDB conectado
+    🚀 Servidor corriendo en puerto 5000
+    📍 Frontend URL: http://localhost:5173
+    📡 API URL: http://localhost:5000/api
+    🔐 Google OAuth: http://localhost:5000/api/auth/google
+    ```
+
+    The server also seeds the Terms & Conditions collection on first run if it is empty.
+  </Step>
+
+  <Step title="Start the Client">
+    In a separate terminal, from the `client/` directory:
+
+    ```bash
+    npm run dev
+    ```
+
+    Vite starts the development server and prints a local URL:
+
+    ```
+    VITE v7.x.x  ready in NNN ms
+
+    ➜  Local:   http://localhost:5173/
+    ➜  Network: use --host to expose
     ```
   </Step>
+
+  <Step title="Initialize the Super-Admin Account">
+    Before you can access the admin panel, run the bootstrap script from the **project root** (or from `server/`). It reads `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_NAME`, and `SUPER_ADMIN_PASSWORD` from your `server/.env` and creates an admin user with `role: 'admin'` and `isSuperAdmin: true`:
+
+    ```bash
+    node server/scripts/initSuperAdmin.js
+    ```
+
+    Expected output:
+
+    ```
+    ✅ Conectado a MongoDB
+    ✅ Superadmin creado exitosamente
+    📧 Email: admin@example.com
+    ⚠️  IMPORTANTE: Cambia la contraseña inmediatamente después del primer login
+    ```
+
+    If you run the script a second time it exits safely without creating a duplicate:
+
+    ```
+    ⚠️  Superadmin ya existe. No se creará duplicado.
+    ```
+
+    <Warning>
+      Change the super-admin password immediately after your first login. Never commit `SUPER_ADMIN_PASSWORD` to version control.
+    </Warning>
+  </Step>
+
+  <Step title="Open the App and Log In">
+    Navigate to [http://localhost:5173](http://localhost:5173) in your browser.
+
+    - **Regular users** can register via `/registro` or sign in with Google.
+    - **Admin login**: go to `/login` and use the super-admin credentials you set in `server/.env`.
+    - After login, the admin panel is available at `/admin`.
+
+    You're now running HealtyHelp locally with the full recipe catalog, NutriBot chatbot, nutrition tracking, and admin dashboard all functional.
+  </Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+---
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="layer-group" href="/architecture">
+    Understand how the React frontend, Express API, MongoDB models, and third-party integrations are structured.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth">
+    Explore the complete set of REST endpoints for auth, recipes, consumos, chat, and admin operations.
+  </Card>
+</CardGroup>

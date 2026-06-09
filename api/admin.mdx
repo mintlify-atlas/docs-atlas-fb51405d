@@ -1,0 +1,674 @@
+---
+title: "HealtyHelp Admin API: Users, Stats, and Moderation"
+sidebarTitle: "Admin API"
+description: "Manage platform users, roles, bans, invitations, image moderation, terms, and audit logs via the HealtyHelp Admin API."
+---
+
+All endpoints on this page require a valid **Bearer token** belonging to a user with the `admin` role — except `POST /api/admin/accept-invite/:token`, which is publicly accessible.
+
+```http
+Authorization: Bearer <admin_token>
+```
+
+---
+
+## Statistics
+
+### GET /api/admin/stats
+
+Returns platform-wide aggregate counts.
+
+**Response**
+
+```json
+{
+  "success": true,
+  "stats": {
+    "totalUsers": 1024,
+    "admins": 3,
+    "superAdmins": 1,
+    "regularUsers": 1020,
+    "imagenesPendientes": 7
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `totalUsers` | number | All registered accounts |
+| `admins` | number | Users with `role: "admin"` (excludes Super Admin) |
+| `superAdmins` | number | Accounts flagged `isSuperAdmin: true` |
+| `regularUsers` | number | Accounts with `role: "user"` |
+| `imagenesPendientes` | number | Review images awaiting moderation |
+
+---
+
+## User Management
+
+### GET /api/admin/users
+
+Returns all registered users. Passwords are never included.
+
+**Response**
+
+```json
+{
+  "success": true,
+  "count": 42,
+  "users": [
+    {
+      "_id": "664a1f...",
+      "name": "Jane Doe",
+      "email": "jane@example.com",
+      "role": "user",
+      "avatar": "https://...",
+      "googleId": null,
+      "createdAt": "2024-05-19T10:00:00.000Z",
+      "isSuperAdmin": false,
+      "baneado": false,
+      "baneadoHasta": null,
+      "baneadoMotivo": "",
+      "baneadoEn": null
+    }
+  ]
+}
+```
+
+---
+
+### DELETE /api/admin/users/:id
+
+Permanently deletes a user account. The Super Admin account cannot be deleted. A non-super admin cannot delete other admins.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `id` | string | MongoDB ObjectId of the target user |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Usuario Jane Doe eliminado correctamente"
+}
+```
+
+**Error cases**
+
+| Status | Reason |
+|---|---|
+| `400` | Attempting to delete your own account |
+| `403` | Target is the Super Admin or a fellow admin (non-super caller) |
+| `404` | User not found |
+
+---
+
+### PUT /api/admin/users/:id/role
+
+Updates a user's role. Only the Super Admin can promote to `admin` or demote another admin.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `id` | string | MongoDB ObjectId of the target user |
+
+**Request Body**
+
+<ParamField body="role" type="string" required>
+  Target role. Must be `"admin"` or `"user"`.
+</ParamField>
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Rol de Jane Doe actualizado a admin",
+  "user": {
+    "_id": "664a1f...",
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "role": "admin"
+  }
+}
+```
+
+---
+
+### PUT /api/admin/users/:id/ban
+
+Bans a user for a fixed number of days or permanently.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `id` | string | MongoDB ObjectId of the target user |
+
+**Request Body**
+
+<ParamField body="motivo" type="string">
+  Human-readable ban reason shown to moderators.
+</ParamField>
+
+<ParamField body="dias" type="number | null">
+  Duration in days. Pass `null` for a permanent ban.
+</ParamField>
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Usuario baneado por 7 días",
+  "baneadoHasta": "2025-07-26T14:30:00.000Z"
+}
+```
+
+For a permanent ban the `message` will read `"Usuario baneado permanentemente"` and `baneadoHasta` will be `null`.
+
+**Example — temporary ban (7 days)**
+
+```bash
+curl -X PUT https://api.healtyhelp.com/api/admin/users/664a1f.../ban \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "motivo": "Spam en reseñas", "dias": 7 }'
+```
+
+**Example — permanent ban**
+
+```bash
+curl -X PUT https://api.healtyhelp.com/api/admin/users/664a1f.../ban \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "motivo": "Violación grave de términos", "dias": null }'
+```
+
+**Error cases**
+
+| Status | Reason |
+|---|---|
+| `400` | Attempting to ban yourself or the Super Admin |
+| `403` | Non-super admin attempting to ban another admin |
+| `404` | User not found |
+
+---
+
+### PUT /api/admin/users/:id/unban
+
+Lifts an existing ban, clearing all ban fields.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `id` | string | MongoDB ObjectId of the target user |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Usuario desbaneado correctamente"
+}
+```
+
+---
+
+### GET /api/admin/users/:id/ban
+
+Returns the current ban status for a specific user.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `id` | string | MongoDB ObjectId of the target user |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "ban": {
+    "baneado": true,
+    "baneadoHasta": "2025-07-26T14:30:00.000Z",
+    "baneadoMotivo": "Spam en reseñas",
+    "baneadoEn": "2025-07-19T14:30:00.000Z",
+    "permanente": false
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `baneado` | boolean | Whether the user is currently banned |
+| `baneadoHasta` | string \| null | ISO expiry date, or `null` if permanent |
+| `baneadoMotivo` | string | Reason provided at ban time |
+| `baneadoEn` | string \| null | ISO date when the ban was applied |
+| `permanente` | boolean | `true` when `baneado` is `true` and `baneadoHasta` is `null` |
+
+---
+
+## Admin Invitations
+
+### POST /api/admin/invite
+
+Generates a 24-hour single-use invitation link and sends it to the specified email address.
+
+**Request Body**
+
+<ParamField body="email" type="string" required>
+  Email address of the person being invited. Must not already be registered.
+</ParamField>
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Invitación enviada a newadmin@example.com",
+  "expiresAt": "2025-07-20T14:30:00.000Z"
+}
+```
+
+**Example**
+
+```bash
+curl -X POST https://api.healtyhelp.com/api/admin/invite \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "newadmin@example.com" }'
+```
+
+**Error cases**
+
+| Status | Reason |
+|---|---|
+| `400` | Email is already registered to an existing account |
+
+---
+
+### GET /api/admin/invitations
+
+Returns all pending (unused) invitations.
+
+**Response**
+
+```json
+{
+  "success": true,
+  "invitations": [
+    {
+      "_id": "665c2a...",
+      "email": "newadmin@example.com",
+      "name": "New Admin",
+      "invitedBy": { "_id": "664a1f...", "name": "Super Admin", "email": "super@example.com" },
+      "expiresAt": "2025-07-20T14:30:00.000Z",
+      "used": false,
+      "createdAt": "2025-07-19T14:30:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### DELETE /api/admin/invitations/:id
+
+Immediately revokes a pending invitation. The invitation link will no longer be valid.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `id` | string | MongoDB ObjectId of the invitation |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Invitación revocada"
+}
+```
+
+---
+
+### POST /api/admin/accept-invite/:token
+
+<Note>This endpoint is **public** — no Bearer token is required.</Note>
+
+Accepts an invitation and creates a new admin account. The token is extracted from the invitation URL and has a 24-hour TTL.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `token` | string | Raw invite token from the invitation URL |
+
+**Request Body**
+
+<ParamField body="name" type="string" required>
+  Display name for the new admin account.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Password for the new admin account.
+</ParamField>
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Cuenta de admin creada exitosamente",
+  "user": {
+    "id": "665d3b...",
+    "name": "New Admin",
+    "email": "newadmin@example.com",
+    "role": "admin"
+  }
+}
+```
+
+**Error cases**
+
+| Status | Reason |
+|---|---|
+| `400` | Token is invalid, already used, or expired |
+
+---
+
+## Logs
+
+### GET /api/admin/logs
+
+Returns a paginated audit trail of all admin actions.
+
+**Query Parameters**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `page` | number | `1` | Page number |
+| `limit` | number | `50` | Results per page |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "logs": [
+    {
+      "_id": "666e4c...",
+      "adminId": { "_id": "664a1f...", "name": "Super Admin", "email": "super@example.com" },
+      "action": "BAN_USER",
+      "targetUserId": { "_id": "664b2e...", "name": "Jane Doe", "email": "jane@example.com" },
+      "metadata": { "motivo": "Spam en reseñas", "dias": 7, "userName": "Jane Doe" },
+      "createdAt": "2025-07-19T14:30:00.000Z"
+    }
+  ],
+  "pagination": {
+    "total": 200,
+    "page": 1,
+    "pages": 4
+  }
+}
+```
+
+**Supported `action` values**
+
+| Value | Triggered by |
+|---|---|
+| `BAN_USER` | `PUT /users/:id/ban` |
+| `UNBAN_USER` | `PUT /users/:id/unban` |
+| `DELETE_USER` | `DELETE /users/:id` |
+| `CHANGE_ROLE` | `PUT /users/:id/role` |
+| `INVITE_ADMIN` | `POST /invite` |
+| `ADMIN_INVITE_ACCEPTED` | `POST /accept-invite/:token` |
+| `REVOKE_INVITATION` | `DELETE /invitations/:id` |
+| `APPROVE_RESENA_IMAGE` | `PUT /imagenes-resenas/:recipeId/:resenaId/aprobar` |
+| `REJECT_RESENA_IMAGE` | `PUT /imagenes-resenas/:recipeId/:resenaId/rechazar` |
+| `DELETE_RESENA_IMAGE_HISTORY` | `DELETE /imagenes-resenas/:recipeId/:resenaId` |
+| `DELETE_RESENA_IMAGE_HISTORY_MASIVO` | `DELETE /imagenes-resenas/masivo` |
+
+---
+
+## Image Moderation
+
+Review images attached to recipe reviews. Each image carries a state of `pendiente`, `aprobada`, or `rechazada`.
+
+---
+
+### GET /api/admin/imagenes-resenas
+
+Returns a paginated list of review images filtered by moderation state.
+
+**Query Parameters**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `estado` | string | `"pendiente"` | Filter by image state: `pendiente`, `aprobada`, or `rechazada` |
+| `page` | number | `1` | Page number |
+| `limit` | number | `12` | Results per page |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "items": [
+    {
+      "recipeId": "663a0f...",
+      "recipeNombre": "Ensalada César",
+      "resenaId": "664b2e...",
+      "userId": "664a1f...",
+      "userName": "Jane Doe",
+      "texto": "Deliciosa receta, muy recomendada.",
+      "estrellas": 5,
+      "createdAt": "2025-07-18T09:00:00.000Z",
+      "imagenUrl": "https://res.cloudinary.com/...",
+      "imagenPublicId": "healtyhelp/resenas/abc123",
+      "imagenEstado": "pendiente"
+    }
+  ],
+  "pagination": {
+    "total": 7,
+    "page": 1,
+    "pages": 1
+  }
+}
+```
+
+---
+
+### PUT /api/admin/imagenes-resenas/:recipeId/:resenaId/aprobar
+
+Marks a review image as `aprobada`, making it publicly visible.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `recipeId` | string | MongoDB ObjectId of the recipe |
+| `resenaId` | string | MongoDB ObjectId of the review |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Imagen aprobada. Ya es visible para todos."
+}
+```
+
+---
+
+### PUT /api/admin/imagenes-resenas/:recipeId/:resenaId/rechazar
+
+Rejects a review image and **permanently deletes it from Cloudinary**. The image URL and public ID are cleared from the database.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `recipeId` | string | MongoDB ObjectId of the recipe |
+| `resenaId` | string | MongoDB ObjectId of the review |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Imagen rechazada y eliminada de Cloudinary."
+}
+```
+
+**Error cases**
+
+| Status | Reason |
+|---|---|
+| `400` | The review has no associated image |
+| `404` | Recipe or review not found |
+
+---
+
+### DELETE /api/admin/imagenes-resenas/:recipeId/:resenaId
+
+Removes the image history entry from a review that has already been approved or rejected. Pending images cannot be deleted via this endpoint — use the reject action instead.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `recipeId` | string | MongoDB ObjectId of the recipe |
+| `resenaId` | string | MongoDB ObjectId of the review |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Registro eliminado del historial."
+}
+```
+
+---
+
+### DELETE /api/admin/imagenes-resenas/masivo
+
+Bulk-deletes image history entries for multiple reviews in a single request. Each item's image asset is also removed from Cloudinary.
+
+<Warning>
+  This operation is **irreversible**. Deleted image records and their associated Cloudinary assets cannot be recovered. Use with caution — only approved or rejected images can be targeted; pending images will be counted as failures.
+</Warning>
+
+**Request Body**
+
+<ParamField body="items" type="array" required>
+  Array of objects identifying the review images to delete.
+</ParamField>
+
+<ParamField body="items[].recipeId" type="string" required>
+  MongoDB ObjectId of the recipe.
+</ParamField>
+
+<ParamField body="items[].resenaId" type="string" required>
+  MongoDB ObjectId of the review.
+</ParamField>
+
+**Example Request Body**
+
+```json
+{
+  "items": [
+    { "recipeId": "663a0f...", "resenaId": "664b2e..." },
+    { "recipeId": "663a0f...", "resenaId": "664c3f..." }
+  ]
+}
+```
+
+**Response**
+
+```json
+{
+  "success": true,
+  "ok": 2,
+  "fail": 0,
+  "message": "2 registros eliminados del historial."
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `ok` | number | Successfully deleted items |
+| `fail` | number | Items that could not be deleted (not found, wrong state, etc.) |
+
+---
+
+## Terms Management
+
+### GET /api/admin/terms
+
+Returns the most recently published terms document.
+
+**Response**
+
+```json
+{
+  "terms": {
+    "_id": "667f5d...",
+    "version": "2.1.0",
+    "content": "# Terms and Conditions\n...",
+    "publishedBy": "664a1f...",
+    "publishedAt": "2025-06-01T00:00:00.000Z"
+  }
+}
+```
+
+Returns `{ "terms": null }` if no terms document has been published yet.
+
+---
+
+### PUT /api/admin/terms
+
+Publishes a new version of the Terms & Conditions document.
+
+<Warning>
+  Publishing a new version **immediately resets `termsAccepted` to `false`** for every user on the platform (except the publishing admin). All users will be prompted to re-accept the terms on their next login.
+</Warning>
+
+**Request Body**
+
+<ParamField body="version" type="string" required>
+  Semantic version string (e.g. `"2.2.0"`). Must differ from the currently published version.
+</ParamField>
+
+<ParamField body="content" type="string" required>
+  Full terms document content (plain text or Markdown).
+</ParamField>
+
+**Response**
+
+```json
+{
+  "success": true,
+  "terms": {
+    "_id": "668a6e...",
+    "version": "2.2.0",
+    "content": "# Terms and Conditions\n...",
+    "publishedBy": "664a1f...",
+    "publishedAt": "2025-07-19T15:00:00.000Z"
+  }
+}
+```
+
+**Error cases**
+
+| Status | Reason |
+|---|---|
+| `400` | `version` or `content` is missing, or `version` matches the currently active version |

@@ -1,0 +1,211 @@
+---
+title: "Moderate User Review Images in HealtyHelp Admin"
+sidebarTitle: "Image Moderation"
+description: "How to approve, reject, and bulk-delete user-uploaded review images using the HealtyHelp admin API and the ImagenesAprobacion dashboard component."
+---
+
+HealtyHelp allows users to attach a single image to each recipe review. Images are stored on **Cloudinary** and go through an admin approval queue before becoming visible to other users.
+
+## Image Approval Workflow
+
+```
+User uploads image with review
+        │
+        ▼
+  imagen.estado = "pendiente"
+  imagen.url    = Cloudinary secure_url
+  imagen.publicId = Cloudinary public_id
+        │
+        ├──► Admin approves ──► estado = "aprobada"  (image visible to all)
+        │
+        └──► Admin rejects  ──► Cloudinary destroy() called
+                                estado = "rechazada"
+                                url = null, publicId = null
+```
+
+## Image States
+
+| State | Value | Visibility |
+|---|---|---|
+| Pending review | `"pendiente"` | Visible only to the uploading user (as a "pending" notice) |
+| Approved | `"aprobada"` | Visible to all users |
+| Rejected | `"rechazada"` | Image deleted from Cloudinary; no longer visible to anyone |
+
+Images are embedded inside `Recipe.resenas[].imagen` and stored in Cloudinary under the `healtyhelp/resenas` folder with dimensions up to 1200×1200 px and automatic quality optimization.
+
+---
+
+## List Review Images
+
+```bash
+GET /api/admin/imagenes-resenas?estado=pendiente
+Authorization: Bearer <admin_token>
+```
+
+**Query parameters:**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `estado` | `"pendiente"` | Filter by state: `pendiente`, `aprobada`, or `rechazada` |
+| `page` | `1` | Page number |
+| `limit` | `12` | Items per page |
+
+```json
+{
+  "success": true,
+  "items": [
+    {
+      "recipeId": "665f001122334455aabbcc01",
+      "recipeNombre": "Mediterranean Quinoa Bowl",
+      "resenaId": "665f001122334455aabbcc10",
+      "userId": "665f001122334455aabbcc20",
+      "userName": "Jane Doe",
+      "texto": "Absolutely delicious! Made it for dinner last night.",
+      "estrellas": 5,
+      "createdAt": "2025-06-14T08:30:00.000Z",
+      "imagenUrl": "https://res.cloudinary.com/demo/image/upload/healtyhelp/resenas/abc123.jpg",
+      "imagenPublicId": "healtyhelp/resenas/abc123",
+      "imagenEstado": "pendiente"
+    }
+  ],
+  "pagination": {
+    "total": 5,
+    "page": 1,
+    "pages": 1
+  }
+}
+```
+
+The `ImagenesAprobacion` component (`client/src/components/admin/ImagenesAprobacion.jsx`) loads all three states in parallel on mount, caches them in a `useRef`, and switches between tabs instantly without additional network requests.
+
+---
+
+## Approve an Image
+
+Sets `imagen.estado` to `"aprobada"`. The image URL remains intact on Cloudinary.
+
+```bash
+PUT /api/admin/imagenes-resenas/:recipeId/:resenaId/aprobar
+Authorization: Bearer <admin_token>
+```
+
+```json
+{
+  "success": true,
+  "message": "Imagen aprobada. Ya es visible para todos."
+}
+```
+
+Once approved, the image is publicly visible on the recipe's review section.
+
+---
+
+## Reject an Image
+
+Calls `cloudinary.uploader.destroy(publicId)` to permanently delete the file, then clears `url` and `publicId` from the document and sets `estado` to `"rechazada"`.
+
+```bash
+PUT /api/admin/imagenes-resenas/:recipeId/:resenaId/rechazar
+Authorization: Bearer <admin_token>
+```
+
+```json
+{
+  "success": true,
+  "message": "Imagen rechazada y eliminada de Cloudinary."
+}
+```
+
+If the Cloudinary `destroy()` call fails (e.g. the image was already deleted), the error is logged but **does not block** the state update — the document is still updated to `rechazada`.
+
+---
+
+## Delete an Image Record
+
+Removes the entire `imagen` sub-document from the review. Only records in `"aprobada"` or `"rechazada"` state can be deleted this way; `"pendiente"` images must be approved or rejected first.
+
+```bash
+DELETE /api/admin/imagenes-resenas/:recipeId/:resenaId
+Authorization: Bearer <admin_token>
+```
+
+This also calls `cloudinary.uploader.destroy()` if a `publicId` is still present.
+
+```json
+{
+  "success": true,
+  "message": "Registro eliminado del historial."
+}
+```
+
+---
+
+## Bulk Delete Image Records
+
+<Warning>
+  This endpoint is **irreversible**. All matched Cloudinary assets are destroyed and their `imagen` sub-documents are `$unset` from the recipe. There is no undo.
+</Warning>
+
+```bash
+DELETE /api/admin/imagenes-resenas/masivo
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "items": [
+    { "recipeId": "665f001122334455aabbcc01", "resenaId": "665f001122334455aabbcc10" },
+    { "recipeId": "665f001122334455aabbcc02", "resenaId": "665f001122334455aabbcc11" }
+  ]
+}
+```
+
+The server processes each item with `Promise.allSettled` — failures in one item do not abort the others.
+
+```json
+{
+  "success": true,
+  "ok": 2,
+  "fail": 0,
+  "message": "2 registros eliminados del historial."
+}
+```
+
+Items in `"pendiente"` state are skipped (counted as `fail`) — you must approve or reject them before they can be bulk-deleted.
+
+---
+
+## Cloudinary Integration
+
+Images are uploaded via the `uploadResena` multer middleware defined in `server/config/cloudinary.js`:
+
+```js
+// Effective configuration for review images
+{
+  folder: "healtyhelp/resenas",
+  allowedFormats: ["jpg", "jpeg", "png", "webp"],
+  transformation: [{ width: 1200, height: 1200, crop: "limit", quality: "auto" }],
+  limits: { fileSize: 5 * 1024 * 1024 }   // 5 MB max
+}
+```
+
+Cloudinary returns a `secure_url` (stored as `imagen.url`) and a `public_id` (stored as `imagen.publicId`). The `publicId` is the value passed to `cloudinary.uploader.destroy()` during rejection or deletion.
+
+Required environment variables:
+
+```
+CLOUDINARY_CLOUD_NAME=...
+CLOUDINARY_API_KEY=...
+CLOUDINARY_API_SECRET=...
+```
+
+---
+
+## Dashboard Component Features
+
+The `ImagenesAprobacion` component supports:
+
+- **Tabbed filter** — switch between Pendientes / Aprobadas / Rechazadas with live counters.
+- **Badge polling** — the parent `Dashboard` polls pending count every 60 seconds and shows a badge on the Imágenes tab.
+- **Full-size image modal** — click any image card to preview it at full size with approve/reject actions inline.
+- **Multi-select mode** — select multiple cards for batch approve, reject, or history deletion.
+- **Ban user from image context** — a "Ban user" button is available on rejected image cards, opening the ban modal pre-filled with the user's name and the review context.

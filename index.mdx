@@ -1,20 +1,62 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "HealtyHelp: Healthy Eating Made Smart"
+sidebarTitle: "Home"
+description: "HealtyHelp is a full-stack healthy eating platform with a recipe catalog, AI nutrition chatbot, calorie tracking, and a powerful admin panel."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+HealtyHelp is an open-source web application that helps users eat better through a curated recipe catalog, an AI-powered nutrition assistant (NutriBot), daily calorie tracking, and personalized dietary recommendations. Whether you're self-hosting or contributing, this documentation covers everything from spinning up the dev environment to every REST API endpoint.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get the server and client running locally in under 10 minutes.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand how the React frontend, Express API, and MongoDB fit together.
+  </Card>
+  <Card title="Core Features" icon="star" href="/features/recipes">
+    Explore recipes, nutrition tracking, the NutriBot chatbot, and favorites.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth">
+    Full reference for all REST endpoints — auth, recipes, consumos, chat, and admin.
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## What's Inside
+
+HealtyHelp ships as a monorepo with a **React/Vite** frontend and an **Express + MongoDB** backend. Here's what the platform offers:
+
+<CardGroup cols={2}>
+  <Card title="Recipe Catalog" icon="utensils" href="/features/recipes">
+    Browse, filter, and search hundreds of recipes with complete nutritional data including macros, vitamins, and amino acids.
+  </Card>
+  <Card title="NutriBot AI Chat" icon="robot" href="/features/chatbot">
+    LLaMA 3.3 70B via Groq answers nutrition questions and recommends recipes tailored to each user's health profile.
+  </Card>
+  <Card title="Nutrition Tracking" icon="chart-line" href="/features/nutrition-tracking">
+    Log meals by day, week, or month. Get visual macro summaries and calorie progress toward your TDEE goal.
+  </Card>
+  <Card title="Admin Panel" icon="shield" href="/admin/overview">
+    Full admin dashboard with user management, recipe CRUD, image moderation, AI prompt control, and terms versioning.
+  </Card>
+</CardGroup>
+
+## Get Started in 4 Steps
+
+<Steps>
+  <Step title="Clone and install dependencies">
+    Clone the repository and install packages for both the server and the client.
+  </Step>
+  <Step title="Configure environment variables">
+    Copy the `.env` templates and fill in your MongoDB URI, JWT secret, Groq API key, and Google OAuth credentials.
+  </Step>
+  <Step title="Start the development servers">
+    Run `npm run dev` in both `server/` and `client/` to launch the API on port 5000 and the frontend on port 5173.
+  </Step>
+  <Step title="Create your Super Admin account">
+    Run the `initSuperAdmin` script to bootstrap the first admin user, then log in at `/login`.
+  </Step>
+</Steps>
+
+<Note>
+  The full step-by-step setup guide with all commands is on the [Quickstart](/quickstart) page.
+</Note>

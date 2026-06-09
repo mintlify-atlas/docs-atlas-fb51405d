@@ -1,0 +1,325 @@
+---
+title: "Create, Import, and Manage Recipes as Admin"
+sidebarTitle: "Recipe Management"
+description: "Full API reference for creating, updating, deleting, bulk-importing, and exporting HealtyHelp recipes, including the complete nutritional schema."
+---
+
+Recipe management endpoints live under `/api/recipes/`. Public routes (`GET /` and `GET /:id`) are unauthenticated. All write routes require a valid JWT with `role: "admin"`.
+
+## Valid Categories
+
+The `cat` field accepts exactly one of:
+
+| Value | Label |
+|---|---|
+| `desayuno` | Breakfast |
+| `almuerzo` | Lunch |
+| `cena` | Dinner |
+| `postres-snacks` | Desserts & Snacks |
+
+Any other value triggers a Mongoose validation error.
+
+## Valid Health Tags (`salud`)
+
+The `salud` field is a free-form string array, but the UI exposes these 18 standard values:
+
+`diabetes`, `hipertension`, `celiaco`, `intolerancia-lactosa`, `vegano`, `vegetariano`, `bajo-sodio`, `bajo-carbohidratos`, `keto`, `paleo`, `sin-frutos-secos`, `sin-mariscos`, `bajo-grasa`, `sin-azucar`, `colesterol-alto`, `enfermedad-renal`, `gastritis`, `sindrome-intestino`
+
+---
+
+## Create a Recipe
+
+```bash
+POST /api/recipes
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+```
+
+**Required fields:** `nombre`, `desc`, `cat`  
+**Optional fields:** `img`, `salud`, `ingredientes`, `pasos`, `nutri`, `tiempoMinutos`
+
+The server strips `resenas`, `puntosProm`, and `totalResenas` from the request body before saving. After creation, all users receive a new-recipe notification via `crearNotifNuevaReceta`.
+
+### Complete request body example
+
+```json
+{
+  "nombre": "Mediterranean Quinoa Bowl",
+  "desc": "A protein-rich bowl with quinoa, cherry tomatoes, cucumber, and feta.",
+  "img": "https://res.cloudinary.com/demo/image/upload/quinoa-bowl.jpg",
+  "cat": "almuerzo",
+  "salud": ["vegano", "bajo-sodio", "celiaco"],
+  "ingredientes": [
+    "200g quinoa",
+    "100g cherry tomatoes",
+    "1 cucumber",
+    "50g feta cheese",
+    "2 tbsp olive oil",
+    "Lemon juice to taste"
+  ],
+  "pasos": [
+    "Cook quinoa according to package instructions and let cool.",
+    "Halve cherry tomatoes and dice cucumber.",
+    "Combine all ingredients, drizzle with olive oil and lemon juice.",
+    "Season with salt and pepper and serve."
+  ],
+  "tiempoMinutos": 25,
+  "nutri": {
+    "cal": 420,
+    "prot": 18,
+    "carb": 52,
+    "carbNetos": 46,
+    "gras": 14,
+    "fiber": 6,
+    "sodio": 320,
+    "colesterol": 15,
+    "calcio": 180,
+    "hierro": 3.2,
+    "potasio": 510,
+    "vitC": 22,
+    "vitB12": 0.4
+  }
+}
+```
+
+```json
+// 201 response
+{
+  "success": true,
+  "message": "Receta creada correctamente",
+  "recipe": { "_id": "665f...", "nombre": "Mediterranean Quinoa Bowl", ... }
+}
+```
+
+---
+
+## Update a Recipe
+
+```bash
+PUT /api/recipes/:id
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+```
+
+Pass only the fields you want to change. `resenas`, `puntosProm`, and `totalResenas` are stripped server-side. The update runs with `runValidators: true`.
+
+```json
+// Example: change category and add a health tag
+{
+  "cat": "cena",
+  "salud": ["vegano", "bajo-sodio", "celiaco", "vegetariano"]
+}
+```
+
+```json
+// 200 response
+{
+  "success": true,
+  "message": "Receta actualizada correctamente",
+  "recipe": { ... }
+}
+```
+
+---
+
+## Delete a Single Recipe
+
+```bash
+DELETE /api/recipes/:id
+Authorization: Bearer <admin_token>
+```
+
+Deletes the recipe and all `Notification` documents that reference it (`recetaId`).
+
+```json
+{
+  "success": true,
+  "message": "Receta eliminada correctamente"
+}
+```
+
+---
+
+## Bulk Delete Recipes
+
+```bash
+POST /api/recipes/delete-multiple
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "ids": [
+    "665f001122334455aabbcc01",
+    "665f001122334455aabbcc02"
+  ]
+}
+```
+
+```json
+{
+  "success": true,
+  "message": "2 recetas eliminadas",
+  "deleted": 2
+}
+```
+
+---
+
+## Bulk Import Recipes
+
+Upload a JSON array of recipe objects. The import validates that every object has `nombre`, `desc`, and `cat` before inserting any records.
+
+```bash
+POST /api/recipes/import
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "recipes": [ { ... }, { ... } ],
+  "mode": "add"
+}
+```
+
+| `mode` value | Behaviour |
+|---|---|
+| `"add"` (default) | Inserts new recipes alongside existing ones |
+| `"replace"` | Deletes **all** existing recipes first, then inserts the new batch |
+
+<Warning>
+  `mode: "replace"` is irreversible. The server first counts all existing documents, deletes them, then inserts the new batch. Confirm with a backup before proceeding.
+</Warning>
+
+```json
+// 200 response — add mode
+{
+  "success": true,
+  "message": "15 recetas importadas",
+  "result": { "created": 15 }
+}
+
+// 200 response — replace mode
+{
+  "success": true,
+  "message": "15 recetas importadas",
+  "result": { "deleted": 42, "created": 15 }
+}
+```
+
+### Import JSON format
+
+```json
+[
+  {
+    "nombre": "Avocado Toast",
+    "desc": "Creamy avocado on toasted sourdough.",
+    "img": "https://example.com/avocado-toast.jpg",
+    "cat": "desayuno",
+    "salud": ["vegano", "bajo-sodio"],
+    "ingredientes": ["2 slices sourdough", "1 avocado", "Salt", "Pepper"],
+    "pasos": ["Toast the bread.", "Mash the avocado.", "Season and serve."],
+    "nutri": { "cal": 320, "prot": 8, "carb": 34, "gras": 16 }
+  }
+]
+```
+
+The `RecipeImport` component (`client/src/components/admin/RecipeImport.jsx`) provides a drag-and-drop dropzone for `.json` files, a review step with inline editing, automatic local draft saving (via `localStorage`), and two import modes selectable via radio buttons.
+
+---
+
+## Export All Recipes
+
+Downloads all recipes as a JSON array, excluding review sub-documents (`resenas`).
+
+```bash
+GET /api/recipes/export/all
+Authorization: Bearer <admin_token>
+```
+
+```json
+{
+  "success": true,
+  "count": 42,
+  "recipes": [ { "_id": "...", "nombre": "...", ... } ]
+}
+```
+
+The `RecipeManagement` component triggers a browser download of the response as `recetas_YYYY-MM-DD.json`.
+
+---
+
+## Recipe Stats
+
+```bash
+GET /api/recipes/stats/summary
+Authorization: Bearer <admin_token>
+```
+
+```json
+{
+  "success": true,
+  "stats": {
+    "total": 42,
+    "byCategory": [
+      { "_id": "almuerzo", "count": 15 },
+      { "_id": "desayuno", "count": 12 },
+      { "_id": "cena", "count": 10 },
+      { "_id": "postres-snacks", "count": 5 }
+    ],
+    "byHealth": [
+      { "_id": "vegano", "count": 18 },
+      { "_id": "diabetes", "count": 10 }
+    ]
+  }
+}
+```
+
+---
+
+## Full Nutritional Schema
+
+All fields default to `0` and can be omitted. The `nutri` object is stored as a sub-document (`nutriSchema`) with the following fields:
+
+### Macros & basics
+
+| Field | Unit | Description |
+|---|---|---|
+| `cal` | kcal | Total calories |
+| `prot` | g | Protein |
+| `carb` | g | Total carbohydrates |
+| `carbNetos` | g | Net carbohydrates |
+| `gras` | g | Total fat |
+| `fiber` | g | Dietary fibre |
+| `sodio` | mg | Sodium |
+| `colesterol` | mg | Cholesterol |
+
+### Minerals
+
+`calcio`, `hierro`, `potasio`, `magnesio`, `cobre`, `fluor`, `fosforo`, `manganeso`, `selenio`, `zinc`
+
+### Vitamins
+
+`vitA` (µg), `vitAui` (IU), `vitB6` (mg), `vitB12` (µg), `vitC` (mg), `vitD` (µg), `vitD2` (µg), `vitD3` (µg), `vitDui` (IU), `vitE` (mg), `vitK` (µg), `folato` (µg), `niacina` (mg), `riboflavina` (mg), `tiamina` (mg), `acidoPant` (mg)
+
+### Carotenoids & compounds
+
+`alfaCaroteno` (µg), `betaCaroteno` (µg), `licopeno` (µg), `retinol` (µg), `colina` (mg), `cafeina` (mg), `teobromina` (mg)
+
+### Sugars
+
+`azucar`, `sacarosa`, `glucosa`, `fructosa`, `lactosa`, `maltosa`, `galactosa`, `almidon` — all in grams.
+
+### Detailed fats
+
+`grasSat`, `grasMonoins`, `grasPoliins`, `grasTrans` — all in grams.
+
+### Fatty acids
+
+`omega3`, `omega6`, `ala`, `dha`, `epa`, `dpa` — all in grams.
+
+### Amino acids
+
+`alanina`, `arginina`, `acidoAsp`, `cistina`, `acidoGlu`, `glicina`, `histidina`, `hidroxiprol`, `isoleucina`, `leucina`, `lisina`, `metionina`, `fenilalanina`, `prolina`, `serina`, `treonina`, `triptofano`, `tirosina`, `valina` — all in grams.
+
+<Tip>
+  Leave unknown micronutrient fields at `0`. You can update them later with a `PUT /api/recipes/:id` call without affecting other fields.
+</Tip>

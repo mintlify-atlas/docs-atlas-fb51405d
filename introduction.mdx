@@ -1,0 +1,95 @@
+---
+title: "HealtyHelp: Healthy Eating Platform Overview"
+sidebarTitle: "Introduction"
+description: "HealtyHelp is an open-source full-stack app combining a recipe catalog, NutriBot AI chatbot, nutrition tracking, and admin tools for healthy eating."
+---
+
+## What is HealtyHelp?
+
+HealtyHelp is an open-source, full-stack healthy eating platform that helps users discover nutritious recipes, track their daily food consumption, and get personalized dietary guidance through an AI-powered chatbot. It pairs a modern React frontend with a hardened Express REST API, storing all data in MongoDB and integrating cloud services for AI inference, image hosting, and authentication.
+
+The project lives in a monorepo with two top-level packages — `client/` (React/Vite) and `server/` (Express/Node.js) — and can be self-hosted or deployed to any cloud provider.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| **Frontend** | React 19, Vite 7, React Router v7, Axios |
+| **Backend** | Express 5, Node.js 18+, Nodemon (dev) |
+| **Database** | MongoDB via Mongoose 8 |
+| **AI / Chatbot** | Groq SDK with LLaMA 3.3 70B (`llama-3.3-70b-versatile`) |
+| **Image Storage** | Cloudinary (upload, moderation, public CDN delivery) |
+| **Authentication** | JWT (jsonwebtoken) + Google OAuth 2.0 via Passport.js |
+| **Email** | Nodemailer (password reset, admin invitations) |
+| **Security** | Helmet, HPP, XSS filter, express-rate-limit, bcryptjs |
+| **PDF Export** | jsPDF + html2canvas (client-side) |
+
+---
+
+## User-Facing Features
+
+### Recipe Catalog
+Browse a full recipe library organized by meal type (`desayuno`, `almuerzo`, `cena`, `postres-snacks`) and health tags. Each recipe exposes a rich nutritional profile — macros, vitamins, minerals, amino acids, and fatty acids — sourced from the `nutri` sub-document in the `Recipe` model. Users can filter by health conditions, category, and meal time using the `useFiltroSalud` hook.
+
+### NutriBot AI Chatbot
+**NutriBot** is an always-accessible floating assistant powered by Groq's LLaMA 3.3 70B model. It answers questions about nutrition, recipes, and healthy eating. The system prompt is configurable by admins via the `AIConfig` collection. Conversation history (last 10 messages) is preserved in memory using the `useChatStore` hook — the chat state persists across route changes without a global store library.
+
+### Nutrition Tracking
+Authenticated users log meals with the `Consumo` model, which snapshots the recipe's nutritional data at the time of consumption. The tracking view (`VistaSeguimiento`) displays consumption history with date filters and nutritional summaries in the Bogotá timezone.
+
+### Favorites
+Users can save up to a configurable number of recipes as favorites. Favorites are stored on the `User` document (`favoritos` field, array of `ObjectId` refs) and synced to the server in real time via the `/api/favoritos` endpoint with optimistic UI updates.
+
+### Personalized Recommendations
+The `/api/recomendaciones` endpoint returns recipe suggestions based on the user's health profile (`healthProfile.condiciones`, `healthProfile.categorias`, and dietary preferences), driving a tailored home feed.
+
+### Dark Mode
+A global dark mode toggle (`modoOscuro` state in `App.jsx`) persists the user's preference to `localStorage` and applies the `modo-oscuro` CSS class to `document.body`.
+
+### PDF Export
+Users can export their nutrition tracking data or recipe details as a PDF file directly from the browser using jsPDF and html2canvas — no server round-trip required.
+
+### Review System
+Users can leave star ratings (1–5) and text reviews on recipes. Reviews support nested replies, likes/dislikes, and optional image attachments that go through an admin approval workflow before becoming publicly visible.
+
+### Notifications
+In-app notifications (`Notification` model) alert users to new replies on their reviews, admin messages, and newly published recipes. Unread counts are surfaced in the navbar.
+
+---
+
+## Admin Capabilities
+
+All admin routes are protected by both the `protect` JWT middleware and the `admin` role middleware, which performs a fresh database lookup on every request.
+
+| Capability | Details |
+|---|---|
+| **User Management** | View all users, verify accounts, change roles |
+| **Banning** | Temporary or permanent bans with a reason (`baneado`, `baneadoHasta`, `baneadoMotivo` fields on `User`) |
+| **Recipe CRUD** | Create, update, and delete individual recipes via `RecipeManagement` |
+| **Bulk Import / Export** | Import recipes from JSON and export the full catalog — logged to `AdminLog` as `IMPORT_RECIPES` / `EXPORT_RECIPES` |
+| **Image Moderation** | Approve or reject user-submitted review images (`ImagenesAprobacion`); images are stored on Cloudinary with `estado: 'pendiente'` until reviewed |
+| **AI Prompt Config** | Edit the NutriBot system prompt stored in the `AIConfig` collection via `PanelIA` |
+| **Terms Versioning** | Publish new versions of the Terms & Conditions through `TermsManager`; users are prompted to re-accept on next login when their stored `termsVersion` differs from the current active version |
+| **Admin Invitations** | Super-admins invite new admins by email using time-limited tokens (`AdminInvitation` model with TTL index) |
+| **Audit Logs** | Every admin action is recorded in `AdminLog` with action type, target user, metadata, IP address, and user agent |
+
+---
+
+## Quick Navigation
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run HealtyHelp locally in under 10 minutes — clone, configure, and log in.
+  </Card>
+  <Card title="Architecture" icon="layer-group" href="/architecture">
+    Understand how the frontend, API, database, and third-party integrations fit together.
+  </Card>
+  <Card title="Authentication" icon="lock" href="/auth/overview">
+    JWT flows, Google OAuth, email verification, and the admin role system explained.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth">
+    Complete reference for every REST endpoint exposed by the Express server.
+  </Card>
+</CardGroup>

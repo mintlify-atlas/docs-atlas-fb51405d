@@ -1,0 +1,207 @@
+---
+title: "HealtyHelp Environment Variables Reference"
+sidebarTitle: "Environment Variables"
+description: "Complete reference for all required and optional environment variables used by the HealtyHelp server and Vite client, including MongoDB, JWT, OAuth, Cloudinary, and email settings."
+---
+
+Every secret and deployment-specific value in HealtyHelp is driven by environment variables loaded via `dotenv` on the server and Vite's `import.meta.env` on the client. Never hard-code these values — and never commit a `.env` file to version control.
+
+<Warning>
+  Add `.env` to your `.gitignore` before your first commit. Leaking secrets (especially `JWT_SECRET` or `CLOUDINARY_API_SECRET`) can compromise every user account and asset in your application.
+</Warning>
+
+---
+
+## Server variables
+
+Create a `.env` file in the `server/` directory (or set these as environment variables on your hosting platform).
+
+### Core — required
+
+<ParamField path="MONGO_URI" type="string" required>
+  Full MongoDB connection string. For MongoDB Atlas this looks like:
+  `mongodb+srv://<user>:<password>@cluster0.xxxxx.mongodb.net/<dbname>?retryWrites=true&w=majority`
+</ParamField>
+
+<ParamField path="JWT_SECRET" type="string" required>
+  Secret key used to sign and verify JSON Web Tokens. Use at least 32 random characters. Generate one with:
+  ```bash
+  node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+  ```
+</ParamField>
+
+<ParamField path="JWT_EXPIRE" type="string" required>
+  Token expiry duration passed directly to `jsonwebtoken`. Examples: `7d`, `24h`, `30d`.
+</ParamField>
+
+<ParamField path="PORT" type="number">
+  Port the Express server listens on. Defaults to `5000` when not set.
+</ParamField>
+
+<ParamField path="FRONTEND_URL" type="string" required>
+  The origin of your frontend application (no trailing slash). Used to configure CORS and OAuth redirect targets.
+  - Development: `http://localhost:5173`
+  - Production: `https://your-app.netlify.app`
+</ParamField>
+
+<ParamField path="BACKEND_URL" type="string" required>
+  The public base URL of the server itself (no trailing slash). Used to build the Google OAuth callback URL inside `passport.js`.
+  - Development: `http://localhost:5000`
+  - Production: `https://api.your-domain.com`
+</ParamField>
+
+<ParamField path="GROQ_API_KEY" type="string" required>
+  API key for the [Groq](https://console.groq.com/) service that powers the LLaMA-based AI chatbot. Obtain one from the Groq developer console.
+</ParamField>
+
+<ParamField path="NODE_ENV" type="string">
+  Runtime environment. Set to `production` on your server host. Accepted values: `development`, `production`.
+
+  Affects behaviour in several places — most notably the auth rate limiter (see note below) and the error handler (stack traces are hidden in production).
+</ParamField>
+
+<Note>
+  **Rate limiting in production.** The `/api/auth/login` route uses an `express-rate-limit` limiter whose `max` is determined at startup by `NODE_ENV`:
+
+  | `NODE_ENV`     | Max requests per 15 min |
+  |----------------|-------------------------|
+  | `development`  | 200                     |
+  | `production`   | 20                      |
+
+  Always set `NODE_ENV=production` on your live server to protect against brute-force attacks.
+</Note>
+
+---
+
+### Google OAuth — needed for Google login
+
+These variables configure the `passport-google-oauth20` strategy in `server/config/passport.js`.
+
+<ParamField path="GOOGLE_CLIENT_ID" type="string">
+  OAuth 2.0 client ID from Google Cloud Console.
+</ParamField>
+
+<ParamField path="GOOGLE_CLIENT_SECRET" type="string">
+  OAuth 2.0 client secret from Google Cloud Console.
+</ParamField>
+
+<ParamField path="GOOGLE_CALLBACK_URL" type="string">
+  The full callback URL registered in Google Cloud Console. Must match exactly.
+  Example: `https://api.your-domain.com/api/auth/google/callback`
+
+  > Note: the passport strategy constructs the callback URL as `` `${process.env.BACKEND_URL}/api/auth/google/callback` ``, so `BACKEND_URL` must be set correctly instead of (or in addition to) this variable.
+</ParamField>
+
+---
+
+### Cloudinary — needed for image uploads
+
+Used in `server/config/cloudinary.js` to upload user avatars and recipe review images.
+
+<ParamField path="CLOUDINARY_CLOUD_NAME" type="string">
+  Your Cloudinary cloud name, visible on the Cloudinary dashboard.
+</ParamField>
+
+<ParamField path="CLOUDINARY_API_KEY" type="string">
+  Cloudinary API key.
+</ParamField>
+
+<ParamField path="CLOUDINARY_API_SECRET" type="string">
+  Cloudinary API secret. Treat this like a password — never expose it client-side.
+</ParamField>
+
+---
+
+### Email — needed for verification emails
+
+HealtyHelp uses [Resend](https://resend.com/) to send transactional email (account verification, password reset, etc.) via `server/utils/emailService.js`.
+
+<ParamField path="RESEND_API_KEY" type="string">
+  API key from your [Resend](https://resend.com/api-keys) account. Requests are authenticated with `Authorization: Bearer <RESEND_API_KEY>`.
+</ParamField>
+
+<ParamField path="EMAIL_FROM" type="string">
+  The sender address that appears in outgoing emails.
+  Example: `HealtyHelp <noreply@your-domain.com>`
+
+  This domain must be verified in your Resend account.
+</ParamField>
+
+---
+
+### Super-admin bootstrap — needed for `initSuperAdmin` script
+
+These variables are only consumed by `server/scripts/initSuperAdmin.js` and are safe to remove from the environment after the script has run once.
+
+<ParamField path="SUPER_ADMIN_NAME" type="string">
+  Display name for the initial super-admin user.
+</ParamField>
+
+<ParamField path="SUPER_ADMIN_EMAIL" type="string">
+  Email address for the initial super-admin user.
+</ParamField>
+
+<ParamField path="SUPER_ADMIN_PASSWORD" type="string">
+  Initial password. **Change this immediately** after the first login.
+</ParamField>
+
+---
+
+## Client variable
+
+Create a `.env` file in the `client/` directory (or set it in your static-host's build settings).
+
+<ParamField path="VITE_API_URL" type="string" required>
+  Base URL of the backend REST API. All Axios requests in the client are relative to this value.
+  - Development: `http://localhost:5000/api`
+  - Production: `https://api.your-domain.com/api`
+
+  Because Vite only exposes variables prefixed with `VITE_`, this is the only variable available in the browser bundle.
+</ParamField>
+
+---
+
+## Complete server `.env` example
+
+Copy this template into `server/.env` and fill in your values:
+
+```bash
+# ── Core ────────────────────────────────────────────────────────────────────
+MONGO_URI=mongodb+srv://user:password@cluster0.xxxxx.mongodb.net/healtyhelp?retryWrites=true&w=majority
+JWT_SECRET=replace_with_at_least_32_random_characters
+JWT_EXPIRE=7d
+PORT=5000
+NODE_ENV=development
+
+# ── URLs ────────────────────────────────────────────────────────────────────
+FRONTEND_URL=http://localhost:5173
+BACKEND_URL=http://localhost:5000
+
+# ── AI Chatbot ───────────────────────────────────────────────────────────────
+GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# ── Google OAuth ─────────────────────────────────────────────────────────────
+GOOGLE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxx
+GOOGLE_CALLBACK_URL=http://localhost:5000/api/auth/google/callback
+
+# ── Cloudinary ───────────────────────────────────────────────────────────────
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=000000000000000
+CLOUDINARY_API_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# ── Email (Resend) ───────────────────────────────────────────────────────────
+RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+EMAIL_FROM=HealtyHelp <noreply@your-domain.com>
+
+# ── Super-admin bootstrap (remove after first run) ───────────────────────────
+SUPER_ADMIN_NAME=Super Admin
+SUPER_ADMIN_EMAIL=admin@your-domain.com
+SUPER_ADMIN_PASSWORD=ChangeMe123!
+```
+
+And in `client/.env`:
+
+```bash
+VITE_API_URL=http://localhost:5000/api
+```

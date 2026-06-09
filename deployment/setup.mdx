@@ -1,0 +1,249 @@
+---
+title: "Deploy HealtyHelp to Production"
+sidebarTitle: "Production Setup"
+description: "Step-by-step guide to build the Vite client, deploy the Express server, configure all environment variables, and harden HealtyHelp for production."
+---
+
+This guide walks you through taking HealtyHelp from a local development clone to a fully running production deployment. The stack is a **Vite + React** frontend (static files) and an **Express + MongoDB** backend (Node.js server), which can be hosted independently on any compatible platform.
+
+<Warning>
+  Never commit `.env` files to version control. Add `server/.env` and `client/.env` to your `.gitignore` before your first push. Exposed secrets — particularly `JWT_SECRET` and `CLOUDINARY_API_SECRET` — can compromise every user account and all uploaded assets.
+</Warning>
+
+---
+
+## Prerequisites
+
+Before deploying, make sure you have accounts and credentials for each external service HealtyHelp depends on:
+
+| Service | Purpose | Free tier? |
+|---|---|---|
+| [MongoDB Atlas](https://www.mongodb.com/atlas) | Managed database | ✅ M0 cluster |
+| [Cloudinary](https://cloudinary.com/) | Avatar and image storage | ✅ Free tier |
+| [Groq](https://console.groq.com/) | LLaMA AI chatbot API | ✅ Free tier |
+| [Google Cloud Console](https://console.cloud.google.com/) | OAuth 2.0 for Google login | ✅ Free |
+| [Resend](https://resend.com/) | Transactional email (verification, password reset) | ✅ Free tier |
+
+You will need all credentials from these services ready before setting environment variables.
+
+---
+
+## Deployment steps
+
+<Steps>
+
+### Build the client
+
+Navigate to the `client/` directory and run the Vite production build:
+
+```bash
+cd client
+npm install
+npm run build
+```
+
+Vite compiles and bundles the React application into a `client/dist/` directory. This is the folder you will upload to your static host.
+
+The `build` script is defined in `client/package.json` as `vite build` and produces an optimised, minified output with hashed filenames for cache-busting.
+
+### Configure SPA routing
+
+The file `client/public/_redirects` is automatically included in the `dist/` output. Its content is:
+
+```
+/*    /index.html   200
+```
+
+This single rule tells **Netlify** (and compatible static hosts) to serve `index.html` for every URL, allowing React Router to handle client-side navigation without returning a 404 on page refresh or deep-link.
+
+If you use a different host, configure an equivalent rewrite rule:
+- **Vercel** — add a `vercel.json` with `"rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]`
+- **Apache** — add a `.htaccess` with `FallbackResource /index.html`
+- **Nginx** — add `try_files $uri /index.html;` in your server block
+
+### Deploy the client
+
+Upload the contents of `client/dist/` to any static-file host.
+
+**Netlify (recommended)**
+
+1. Connect your repository to Netlify (or drag-and-drop the `dist/` folder).
+2. Set the **Base directory** to `client`, **Build command** to `npm run build`, and **Publish directory** to `client/dist`.
+3. Add the environment variable `VITE_API_URL=https://api.your-domain.com/api` in **Site settings → Environment variables**.
+4. Deploy. The `_redirects` file is picked up automatically.
+
+**Other static hosts (Vercel, Cloudflare Pages, AWS S3 + CloudFront)**
+
+Point the host at `client/dist/` and set `VITE_API_URL` as a build-time environment variable. Add the SPA rewrite rule appropriate for that platform (see step 2).
+
+### Deploy the server
+
+The server is a standard Node.js application. Any host that can run `node server.js` will work.
+
+**Recommended platforms**
+
+| Platform | Notes |
+|---|---|
+| [Railway](https://railway.app/) | Zero-config Node.js, free starter plan |
+| [Render](https://render.com/) | Free web service, auto-deploys from Git |
+| [Fly.io](https://fly.io/) | Container-based, generous free allowances |
+| VPS (DigitalOcean, Hetzner, etc.) | Full control; use PM2 or systemd |
+
+**Steps for any platform:**
+
+```bash
+cd server
+npm install --omit=dev
+node server.js
+```
+
+The npm `start` script in `server/package.json` is also `node server.js`, so platforms that auto-detect Node.js will use it automatically.
+
+Set `NODE_ENV=production` as an environment variable on the host — this tightens the auth rate limiter and hides stack traces from API error responses.
+
+### Set environment variables
+
+Set every variable from the table below in your server host's environment settings panel (not in a committed `.env` file).
+
+**Server — required**
+
+| Variable | Example value |
+|---|---|
+| `MONGO_URI` | `mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/healtyhelp?retryWrites=true&w=majority` |
+| `JWT_SECRET` | `<32+ random characters>` |
+| `JWT_EXPIRE` | `7d` |
+| `PORT` | `5000` (or set by host automatically) |
+| `FRONTEND_URL` | `https://your-app.netlify.app` |
+| `BACKEND_URL` | `https://api.your-domain.com` |
+| `GROQ_API_KEY` | `gsk_…` |
+| `NODE_ENV` | `production` |
+
+**Google OAuth**
+
+| Variable | Where to find it |
+|---|---|
+| `GOOGLE_CLIENT_ID` | Google Cloud Console → APIs & Services → Credentials |
+| `GOOGLE_CLIENT_SECRET` | Same credential entry |
+| `GOOGLE_CALLBACK_URL` | `https://api.your-domain.com/api/auth/google/callback` |
+
+Remember to add this callback URL to the **Authorised redirect URIs** list in your Google Cloud OAuth client settings.
+
+**Cloudinary**
+
+| Variable | Where to find it |
+|---|---|
+| `CLOUDINARY_CLOUD_NAME` | Cloudinary dashboard homepage |
+| `CLOUDINARY_API_KEY` | Cloudinary dashboard → Settings → API Keys |
+| `CLOUDINARY_API_SECRET` | Same location |
+
+**Email (Resend)**
+
+| Variable | Value |
+|---|---|
+| `RESEND_API_KEY` | Resend dashboard → API Keys |
+| `EMAIL_FROM` | `HealtyHelp <noreply@your-verified-domain.com>` |
+
+Your sending domain must be verified in Resend before emails will be delivered.
+
+**Client — set in your static host's build environment**
+
+| Variable | Value |
+|---|---|
+| `VITE_API_URL` | `https://api.your-domain.com/api` |
+
+### Bootstrap the first admin user
+
+Once the server is running in production and connected to MongoDB, run the `initSuperAdmin` script once to create the initial super-admin account.
+
+Set these three extra variables temporarily in your environment (remove them after the script completes):
+
+```bash
+SUPER_ADMIN_NAME="Super Admin"
+SUPER_ADMIN_EMAIL="admin@your-domain.com"
+SUPER_ADMIN_PASSWORD="ChangeMe123!"
+```
+
+Then execute the script:
+
+```bash
+cd server
+node scripts/initSuperAdmin.js
+```
+
+Expected output:
+
+```
+✅ Conectado a MongoDB
+✅ Superadmin creado exitosamente
+📧 Email: admin@your-domain.com
+⚠️  IMPORTANTE: Cambia la contraseña inmediatamente después del primer login
+```
+
+The script is idempotent — if an account with that email already exists it exits without creating a duplicate.
+
+<Warning>
+  Change the super-admin password immediately after your first login. Do not leave the `SUPER_ADMIN_PASSWORD` variable set in your production environment after running the script.
+</Warning>
+
+</Steps>
+
+---
+
+## Security checklist
+
+<Accordion title="Use a strong JWT_SECRET">
+  Generate a cryptographically random secret of at least 32 characters:
+
+  ```bash
+  node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+  ```
+
+  A weak or guessable `JWT_SECRET` lets an attacker forge authentication tokens and impersonate any user, including admins.
+</Accordion>
+
+<Accordion title="Set NODE_ENV=production">
+  Setting `NODE_ENV=production` on your server host has two important security effects:
+
+  1. **Tighter auth rate limit** — `/api/auth/login` drops from 200 to **20 requests per 15 minutes**, significantly raising the cost of brute-force and credential-stuffing attacks.
+  2. **Hidden error details** — the global error handler suppresses `err.message` from API responses, preventing accidental leakage of internal paths, query details, or stack frames.
+
+  Always confirm this variable is set before opening your API to the public internet.
+</Accordion>
+
+<Accordion title="Lock CORS to your production frontend URL">
+  `server/server.js` builds the CORS `origin` array from `process.env.FRONTEND_URL`. In production, set this to your exact frontend origin (no trailing slash) and nothing else:
+
+  ```bash
+  FRONTEND_URL=https://your-app.netlify.app
+  ```
+
+  An overly permissive CORS policy allows any website to make credentialed requests to your API on behalf of a logged-in user.
+</Accordion>
+
+<Accordion title="Helmet security headers (already configured)">
+  HealtyHelp already calls `app.use(helmet())` near the top of `server/server.js`. Helmet sets a collection of security-relevant HTTP response headers out of the box, including:
+
+  - `Content-Security-Policy`
+  - `X-Frame-Options: DENY`
+  - `X-Content-Type-Options: nosniff`
+  - `Strict-Transport-Security` (HSTS)
+
+  No additional configuration is required — just make sure you do not remove or disable the `helmet()` middleware.
+</Accordion>
+
+<Accordion title="HPP protection (already configured)">
+  `app.use(hpp())` is applied in `server/server.js` to protect against HTTP Parameter Pollution attacks, which attempt to override Express query parameters by supplying duplicate keys. This middleware is already active and requires no extra setup.
+</Accordion>
+
+<Accordion title="Never commit .env files">
+  Ensure both `server/.env` and `client/.env` are listed in your root `.gitignore`:
+
+  ```gitignore
+  # Environment files — NEVER commit these
+  .env
+  .env.*
+  !.env.example
+  ```
+
+  Use your hosting platform's secrets/environment panel to inject variables at runtime instead.
+</Accordion>

@@ -1,0 +1,262 @@
+---
+title: "Email Verification and Password Reset Flow"
+sidebarTitle: "Email Verification"
+description: "HealtyHelp requires a 6-digit email verification code after registration and supports token-based password reset via Resend."
+---
+
+## Overview
+
+HealtyHelp uses two email-driven flows to keep accounts secure: **email verification** after registration and **password reset** for forgotten credentials. Both flows use the [Resend](https://resend.com) email API and a shared HTML template (`emailBase`) to send branded emails.
+
+---
+
+## Email Service Setup
+
+Emails are sent through the **Resend API** using a thin `enviarEmail` wrapper:
+
+```js
+// server/utils/emailService.js
+const enviarEmail = async ({ to, subject, html }) => {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: process.env.EMAIL_FROM,
+      to,
+      subject,
+      html,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(`Resend error: ${JSON.stringify(err)}`);
+  }
+  return res.json();
+};
+```
+
+### Required environment variables
+
+| Variable | Description | Example |
+|---|---|---|
+| `RESEND_API_KEY` | API key from your Resend dashboard | `re_xxxxxxxxxxxx` |
+| `EMAIL_FROM` | Sender address shown in the email `From` field | `Healthy Help <no-reply@healthyhelpoficial.com>` |
+
+### Email template (`emailBase`)
+
+All transactional emails share the same dark-themed HTML template produced by the `emailBase` helper. It accepts:
+
+| Option | Description |
+|---|---|
+| `titulo` | Bold heading inside the email card |
+| `subtitulo` | Smaller subtitle below the heading |
+| `contenido` | Main HTML body content |
+| `footerTexto` | Small disclaimer text in the footer |
+
+---
+
+## Email Verification Flow
+
+After registration, new accounts are **unverified** (`isVerified: false`). The user cannot log in until they submit the correct code.
+
+<Steps>
+  <Step title="Register an account">
+    Submit a `POST /api/auth/register` request. The server generates a cryptographically random **6-digit numeric code**, hashes it with SHA-256, stores the hash and an expiry 15 minutes in the future, then sends the plaintext code to the user's email.
+
+    ```http
+    POST /api/auth/register
+    Content-Type: application/json
+
+    {
+      "name": "Jane Smith",
+      "email": "jane@example.com",
+      "password": "Secret1234",
+      "birthDate": "1995-06-15",
+      "weight": 65,
+      "height": 168
+    }
+    ```
+
+    **Success response (`201`):**
+    ```json
+    {
+      "success": true,
+      "needsVerification": true,
+      "email": "jane@example.com",
+      "message": "Cuenta creada. Revisa tu correo para verificar."
+    }
+    ```
+  </Step>
+
+  <Step title="Check your inbox">
+    The user receives a branded HealtyHelp email with the subject **"🔐 Verifica tu cuenta — Healthy Help"**. Inside the email, each of the 6 digits is rendered in its own styled box. The code **expires in 15 minutes**.
+  </Step>
+
+  <Step title="Submit the verification code">
+    ```http
+    POST /api/auth/verify-email
+    Content-Type: application/json
+
+    {
+      "email": "jane@example.com",
+      "code": "847291"
+    }
+    ```
+
+    The server hashes the submitted code and compares it to the stored hash. It also checks that `verificationExpire > now`.
+
+    **Success response (`200`):**
+    ```json
+    {
+      "success": true,
+      "token": "<JWT>",
+      "user": { ... }
+    }
+    ```
+
+    On success the user is automatically logged in — a JWT is returned immediately.
+  </Step>
+
+  <Step title="Resend the code (if needed)">
+    If the code expires or was not received, request a new one:
+
+    ```http
+    POST /api/auth/resend-code
+    Content-Type: application/json
+
+    {
+      "email": "jane@example.com"
+    }
+    ```
+
+    A fresh 6-digit code is generated with a new 15-minute expiry and emailed again.
+  </Step>
+</Steps>
+
+### Code behaviour summary
+
+| Detail | Value |
+|---|---|
+| Format | 6-digit numeric string (`100000`–`999999`) |
+| Storage | SHA-256 hash of the plaintext code |
+| Expiry | 15 minutes from generation |
+| Re-registration | If the email exists but is unverified, a new code is sent automatically |
+
+---
+
+## Forgot Password Flow
+
+<Steps>
+  <Step title="Request a password reset">
+    ```http
+    POST /api/auth/forgot-password
+    Content-Type: application/json
+
+    {
+      "email": "jane@example.com"
+    }
+    ```
+
+    The server always returns a `200` success response (to avoid revealing whether an email exists in the system). If the email matches a verified account, a **32-byte random token** is generated, hashed with SHA-256, and stored alongside a 30-minute expiry. The plaintext token is emailed as part of a reset link.
+
+    <Note>
+      Google-only accounts (no password set) cannot use the forgot-password flow. They are directed to sign in with Google instead.
+    </Note>
+  </Step>
+
+  <Step title="Check your inbox">
+    The user receives an email with the subject **"🔐 Recupera tu contraseña — Healthy Help"** containing a styled button and a fallback plaintext link:
+
+    ```
+    {FRONTEND_URL}/reset-password/<plaintext-token>
+    ```
+
+    The link **expires in 30 minutes**.
+  </Step>
+
+  <Step title="Submit the new password">
+    The frontend extracts the token from the URL and calls:
+
+    ```http
+    PUT /api/auth/reset-password/:token
+    Content-Type: application/json
+
+    {
+      "password": "NewSecret9!"
+    }
+    ```
+
+    The server hashes the URL token, looks up the user, validates that `resetPasswordExpire > now`, and applies the [password rules](/auth/overview#password-requirements). On success:
+
+    - The new password is saved (bcrypt, 12 rounds).
+    - `resetPasswordToken` and `resetPasswordExpire` are cleared.
+    - `loginAttempts` and `lockUntil` are reset (lifts any existing lockout).
+    - A fresh JWT is returned.
+
+    **Success response (`200`):**
+    ```json
+    {
+      "success": true,
+      "token": "<JWT>"
+    }
+    ```
+  </Step>
+</Steps>
+
+### Reset token details
+
+| Detail | Value |
+|---|---|
+| Generation | `crypto.randomBytes(32).toString('hex')` |
+| Storage | SHA-256 hash of the plaintext token |
+| Expiry | 30 minutes from generation |
+| Error message | `"Token inválido o expirado. Solicita un nuevo enlace."` |
+
+---
+
+## Profile Completion Requirement
+
+After verifying their email, users who did not supply all health metrics at registration must complete their profile before they can fully use the platform.
+
+A user's profile is considered **complete** (`profileComplete: true`) when all of the following are valid:
+
+| Field | Constraint |
+|---|---|
+| `birthDate` | User must be **at least 18 years old** (and no older than 120) |
+| `weight` | Between **40 kg** and **300 kg** |
+| `height` | Between **50 cm** and **210 cm** |
+
+Users who registered without providing weight and height are prompted to complete their profile via:
+
+```http
+POST /api/auth/complete-profile
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "birthDate": "1995-06-15",
+  "weight": 68,
+  "height": 172
+}
+```
+
+<Steps>
+  <Step title="User logs in for the first time">
+    The `profileComplete` field in the user object is `false`. The frontend detects this and redirects the user to the profile completion screen.
+  </Step>
+
+  <Step title="User submits their metrics">
+    The `POST /api/auth/complete-profile` endpoint validates the fields and, on success, sets `profileComplete: true` on the user document.
+  </Step>
+
+  <Step title="User accesses the full platform">
+    With `profileComplete: true`, all recipe recommendations, calorie tracking, and personalised content become available.
+  </Step>
+</Steps>
+
+<Note>
+  Weight and height can also be provided at registration time. If valid values are supplied then, `profileComplete` is set to `true` immediately after email verification — no extra step is needed.
+</Note>

@@ -1,0 +1,206 @@
+---
+title: "HealtyHelp Admin Panel: Dashboard and Access Control"
+sidebarTitle: "Overview"
+description: "A complete guide to the HealtyHelp admin panel: roles, invitation flow, the SuperAdmin account, dashboard sections, stats, and audit logs."
+---
+
+The HealtyHelp Admin Panel is a protected section of the application accessible only to users with the `admin` role. It provides full control over users, recipes, images, terms of service, and the NutriBot AI prompt.
+
+## Permission Levels
+
+HealtyHelp uses three permission tiers, stored on the `User` document.
+
+| Level | Field values | Can access admin panel | Can delete admins | Can be deleted |
+|---|---|---|---|---|
+| **User** | `role: "user"` | ✗ | ✗ | Yes |
+| **Admin** | `role: "admin"` | ✓ | ✗ | Yes (SuperAdmin only) |
+| **SuperAdmin** | `role: "admin"` + `isSuperAdmin: true` | ✓ | ✓ | Never |
+
+The `isSuperAdmin` boolean flag is independent of `role`. A SuperAdmin always has `role: "admin"` and `isSuperAdmin: true`. The server rejects any attempt to delete or change the role of a SuperAdmin:
+
+```json
+// 403 response on DELETE /api/admin/users/:superAdminId
+{
+  "error": "La cuenta Super Administrador no puede ser eliminada bajo ninguna circunstancia"
+}
+```
+
+## Creating the First SuperAdmin
+
+The SuperAdmin account is bootstrapped with the `initSuperAdmin` script. Run it once after setting up the environment:
+
+```bash
+node server/scripts/initSuperAdmin.js
+```
+
+The script reads three environment variables and creates the account if it does not already exist:
+
+```
+SUPER_ADMIN_NAME=<display name>
+SUPER_ADMIN_EMAIL=<email>
+SUPER_ADMIN_PASSWORD=<initial password>
+```
+
+<Warning>
+  Change the SuperAdmin password immediately after the first login. The script is idempotent — running it again when the account already exists exits safely without creating a duplicate.
+</Warning>
+
+## Inviting New Admins
+
+New admin accounts are created through a token-based invitation flow. Regular user sign-ups cannot receive the `admin` role directly.
+
+### Step 1 — Send the invitation
+
+```bash
+POST /api/admin/invite
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "email": "newadmin@example.com",
+  "name": "New Admin"
+}
+```
+
+The server:
+1. Verifies the email is not already registered.
+2. Creates an `AdminInvitation` document with a SHA-256-hashed token and a 24-hour expiry.
+3. Returns the invite URL (`FRONTEND_URL/admin/accept-invite/<raw_token>`).
+
+```json
+{
+  "success": true,
+  "message": "Invitación enviada a newadmin@example.com",
+  "expiresAt": "2025-06-15T14:00:00.000Z"
+}
+```
+
+### Step 2 — Accept the invitation
+
+This endpoint is **public** — no authentication required:
+
+```bash
+POST /api/admin/accept-invite/:token
+Content-Type: application/json
+
+{
+  "password": "SecureP@ss1"
+}
+```
+
+On success, a new `User` document is created with `role: "admin"` and the invitation is marked `used: true`.
+
+```json
+{
+  "success": true,
+  "message": "Cuenta de admin creada exitosamente",
+  "user": {
+    "id": "665f...",
+    "name": "New Admin",
+    "email": "newadmin@example.com",
+    "role": "admin"
+  }
+}
+```
+
+### Managing pending invitations
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/admin/invitations` | List all unused invitations |
+| `DELETE` | `/api/admin/invitations/:id` | Revoke an invitation |
+
+## Dashboard Component
+
+The `Dashboard` React component (`client/src/components/admin/Dashboard.jsx`) is the root of the admin panel. On mount it fetches `/api/admin/stats` and `/api/admin/users` in parallel, then renders five navigation tabs:
+
+| Tab | Component | Description |
+|---|---|---|
+| **Usuarios** | `UserList` | Manage, ban, and message users |
+| **Recetas** | `RecipeManagement` | Create, import, export, and delete recipes |
+| **Términos** | `TermsManager` | Publish new terms-of-service versions |
+| **Imágenes** | `ImagenesAprobacion` | Approve or reject review images |
+| **Asistente IA** | `PanelIA` | Edit the NutriBot system prompt |
+
+The **Imágenes** tab shows a live badge counter polling `/api/admin/imagenes-resenas?estado=pendiente` every 60 seconds.
+
+## Stats Endpoint
+
+```bash
+GET /api/admin/stats
+Authorization: Bearer <admin_token>
+```
+
+```json
+{
+  "success": true,
+  "stats": {
+    "totalUsers": 142,
+    "admins": 3,
+    "superAdmins": 1,
+    "regularUsers": 138,
+    "imagenesPendientes": 5
+  }
+}
+```
+
+`imagenesPendientes` is computed with an aggregation pipeline over the `Recipe.resenas[].imagen.estado` field.
+
+## Audit Logs
+
+Every admin action (role change, ban, recipe creation, image approval, etc.) is automatically recorded in the `AdminLog` collection via the internal `logAdminAction` helper.
+
+```bash
+GET /api/admin/logs?page=1&limit=50
+Authorization: Bearer <admin_token>
+```
+
+```json
+{
+  "success": true,
+  "logs": [
+    {
+      "_id": "...",
+      "adminId": { "name": "Admin User", "email": "admin@example.com" },
+      "action": "BAN_USER",
+      "targetUserId": { "name": "John Doe", "email": "john@example.com" },
+      "metadata": { "motivo": "spam", "dias": 7, "userName": "John Doe" },
+      "createdAt": "2025-06-14T10:30:00.000Z"
+    }
+  ],
+  "pagination": { "total": 200, "page": 1, "pages": 4 }
+}
+```
+
+You can also write a custom log entry:
+
+```bash
+POST /api/admin/logs
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "action": "CUSTOM_ACTION",
+  "targetUserId": "665f...",
+  "metadata": { "note": "Manual review completed" }
+}
+```
+
+---
+
+## Admin Sub-pages
+
+<CardGroup cols={2}>
+  <Card title="User Management" icon="users" href="/admin/user-management">
+    List users, change roles, ban/unban, and delete accounts.
+  </Card>
+  <Card title="Recipe Management" icon="book-open" href="/admin/recipe-management">
+    Create, update, bulk-import, and export recipes with full nutritional data.
+  </Card>
+  <Card title="Image Moderation" icon="image" href="/admin/image-moderation">
+    Approve or reject images uploaded by users in recipe reviews.
+  </Card>
+  <Card title="Terms & AI Config" icon="file-contract" href="/admin/terms-and-ai">
+    Publish new terms-of-service versions and configure the NutriBot system prompt.
+  </Card>
+</CardGroup>

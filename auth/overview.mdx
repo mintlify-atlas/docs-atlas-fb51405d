@@ -1,0 +1,211 @@
+---
+title: "Authentication in HealtyHelp: JWT and OAuth"
+sidebarTitle: "Overview"
+description: "HealtyHelp supports email/password login with email verification and Google OAuth, both secured with JSON Web Tokens."
+---
+
+## Overview
+
+HealtyHelp protects every user session with **JSON Web Tokens (JWT)**. Two authentication methods are available: classic **email/password** with mandatory email verification, and **Google OAuth 2.0** via Passport.js. Both flows issue the same JWT token format, so the rest of the API treats them identically.
+
+---
+
+## Authentication Methods
+
+| Method | Flow | Verification required |
+|---|---|---|
+| Email / Password | Register → verify email → login | Yes — 6-digit code |
+| Google OAuth | Click "Continue with Google" → Google consent → JWT redirect | No — Google already verified the email |
+
+---
+
+## JWT Token Flow
+
+When a user registers (after email verification) or logs in successfully, the server signs a JWT with the configured secret and expiry:
+
+```js
+const generateToken = (id) =>
+  jwt.sign({ id }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRE,
+  });
+```
+
+The token is returned in the JSON response body:
+
+```json
+{
+  "success": true,
+  "token": "<JWT>",
+  "user": { ... }
+}
+```
+
+### Using the token
+
+Include the token in every authenticated request as a **Bearer** token in the `Authorization` header:
+
+```http
+Authorization: Bearer <your-jwt-token>
+```
+
+Tokens must be stored client-side (e.g., `localStorage`) and sent with every request to a protected endpoint.
+
+---
+
+## The `protect` Middleware
+
+All private routes run through the `protect` middleware before reaching their handler:
+
+```js
+// server/middleware/auth.js
+exports.protect = async (req, res, next) => {
+  let token;
+  if (req.headers.authorization?.startsWith('Bearer')) {
+    token = req.headers.authorization.split(' ')[1];
+  }
+  if (!token) {
+    return res.status(401).json({ error: 'No autorizado - Token no proporcionado' });
+  }
+  const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  // Always load a fresh copy of the user from the database
+  const user = await User.findById(decoded.id).select('-password');
+  if (!user) {
+    return res.status(401).json({ error: 'Usuario no existe o fue eliminado' });
+  }
+  req.user = user;
+  next();
+};
+```
+
+Key behaviour:
+- Rejects requests with no token (`401`).
+- Verifies the signature using `JWT_SECRET`.
+- **Always fetches a fresh user record** from MongoDB — deleted or modified accounts are caught immediately.
+- Returns `401` for expired or tampered tokens.
+
+---
+
+## The `admin` Middleware
+
+Routes that require administrator access chain `protect` then `admin`:
+
+```js
+exports.admin = async (req, res, next) => {
+  const user = await User.findById(req.user._id).select('-password');
+  if (!user || user.role !== 'admin') {
+    return res.status(403).json({
+      error: 'Acceso denegado - Requiere privilegios de administrador',
+    });
+  }
+  req.user = user; // attach the freshly loaded user
+  next();
+};
+```
+
+The middleware re-queries the database so that role changes take effect without requiring a new token.
+
+---
+
+## Roles System
+
+HealtyHelp has three tiers of privilege, stored directly on the `User` document:
+
+| Field / Value | Description |
+|---|---|
+| `role: 'user'` | Standard authenticated user (default) |
+| `role: 'admin'` | Platform administrator — full management access |
+| `isSuperAdmin: true` | Super-administrator flag; the account cannot be deleted |
+
+The `restrictTo(...roles)` helper is available for fine-grained route protection:
+
+```js
+// Only allow admins
+router.get('/admin/users', protect, admin, handler);
+
+// Restrict to specific roles programmatically
+router.delete('/resource', protect, restrictTo('admin'), handler);
+```
+
+---
+
+## Password Requirements
+
+All passwords — whether set at registration or when a Google user adds a password — are validated against these rules:
+
+- Minimum **8 characters**
+- At least one **lowercase** letter (`a–z`)
+- At least one **uppercase** letter (`A–Z`)
+- At least one **digit** (`0–9`)
+
+Passwords are hashed with **bcryptjs** (12 salt rounds) before being stored. The `password` field is excluded from all query results by default (`select: false`).
+
+---
+
+## Account Lockout
+
+HealtyHelp automatically locks an account after **5 consecutive failed login attempts**:
+
+```
+loginAttempts: { type: Number, default: 0 }
+lockUntil:     Date
+```
+
+- Each failed attempt increments `loginAttempts` via `user.incLoginAttempts()`.
+- Once `loginAttempts >= 5`, `lockUntil` is set to **15 minutes** in the future.
+- While locked, the API returns `423 Locked` with the remaining wait time in minutes.
+- A lockout warning email is sent to the account owner.
+- On successful login, `loginAttempts` and `lockUntil` are reset via `user.resetLoginAttempts()`.
+- Completing a password reset also clears the lockout state.
+
+<Warning>
+  The `/api/auth/login` endpoint is rate-limited to **20 requests per 15-minute window** in production. Exceeding this limit returns a `429 Too Many Requests` response — regardless of whether credentials are correct.
+</Warning>
+
+---
+
+## Ban System
+
+Administrators can ban users with time-limited or permanent bans. The ban state is recorded on the user document:
+
+| Field | Type | Description |
+|---|---|---|
+| `baneado` | `Boolean` | Whether the account is currently banned |
+| `baneadoHasta` | `Date` | Ban expiry (`null` = permanent) |
+| `baneadoMotivo` | `String` | Human-readable reason for the ban |
+| `baneadoPor` | `ObjectId` | Reference to the admin who issued the ban |
+| `baneadoEn` | `Date` | Timestamp when the ban was applied |
+
+---
+
+## Session Preferences
+
+Users can configure automatic session expiry. These preferences are stored per-user and respected by the frontend:
+
+| Field | Type | Default | Constraints |
+|---|---|---|---|
+| `autoLogoutEnabled` | `Boolean` | `false` | — |
+| `autoLogoutMinutes` | `Number` | `15` | 1 – 480 minutes |
+
+Update session preferences via:
+
+```http
+PATCH /api/auth/preferences
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "autoLogoutEnabled": true,
+  "autoLogoutMinutes": 30
+}
+```
+
+---
+
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `JWT_SECRET` | Secret key used to sign all tokens |
+| `JWT_EXPIRE` | Token lifetime (e.g. `"7d"`, `"24h"`) |
+
+See the [Google OAuth page](/auth/google-oauth) for OAuth-specific variables and the [Email Verification page](/auth/email-verification) for mail service variables.

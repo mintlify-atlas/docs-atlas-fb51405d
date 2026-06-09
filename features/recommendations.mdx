@@ -1,0 +1,255 @@
+---
+title: "Personalized Nutrition Recommendations Engine"
+sidebarTitle: "Recommendations"
+description: "HealtyHelp's recommendation engine calculates your TDEE, tracks daily macros, and generates personalized nutrition and exercise advice based on your health conditions."
+---
+
+# Personalized Nutrition Recommendations
+
+HealtyHelp includes a server-side recommendation engine (`motorRecomendaciones.js`) that analyses each user's health profile, body metrics, and the last 30 days of consumption history to produce real-time, personalised nutritional and exercise guidance.
+
+---
+
+## What the Engine Uses
+
+The engine reads **only** two fields from `healthProfile`:
+
+| Field | Description |
+|---|---|
+| `healthProfile.condiciones` | Active health conditions / dietary patterns |
+| `healthProfile.categorias` | Active meal-time categories (desayuno, almuerzo, etc.) |
+
+<Warning>
+  `healthProfile.alergias` and `healthProfile.preferencias` are **not read** by the recommendation engine. Those fields are only used by NutriBot's recipe filtering. Allergy information never influences the recommendation score.
+</Warning>
+
+Body metrics used:
+
+| User field | Description |
+|---|---|
+| `weight` | Weight in kg |
+| `height` | Height in cm |
+| `birthDate` | Date of birth (for age and BMR calculation) |
+
+---
+
+## TDEE Calculation (Mifflin-St Jeor)
+
+The engine calculates a gender-neutral **Total Daily Energy Expenditure** using a modified Mifflin-St Jeor formula with a gender-neutral BMR offset:
+
+```js
+// Offset -78 is the mean of the male (+5) and female (-161) constants
+const bmr = 10 * weight + 6.25 * height - 5 * age - 78;
+```
+
+### Age Correction for Sarcopenia
+
+After age 40, the BMR drops approximately 2% per decade due to muscle mass loss:
+
+```js
+const factorEdad = age > 60 ? 0.93 : age > 40 ? 0.97 : 1.0;
+```
+
+### Activity Factor from BMI
+
+Because HealtyHelp does not store a user-reported activity level, the engine infers one from the BMI category as a statistical proxy for sedentary behaviour:
+
+```js
+const FACTOR_ACTIVIDAD_IMC = {
+  bajo_peso:  1.45,
+  normal:     1.55,
+  sobrepeso:  1.48,
+  obesidad:   1.375,
+};
+```
+
+**Final TDEE:**
+
+```js
+const tdee = Math.round(bmr * activityFactor * ageFactor);
+```
+
+---
+
+## BMI Categories
+
+```js
+function calcularIMC(weight, height) {
+  const m   = height / 100;
+  const val = weight / (m * m);
+  // bajo_peso < 18.5 | normal < 25 | sobrepeso < 30 | obesidad >= 30
+}
+```
+
+The BMI `categoria` string drives the activity factor, hydration adjustments, exercise recommendations, and several alert messages.
+
+---
+
+## Health Condition Limits (`LIMITES_CONDICION`)
+
+The engine enforces per-day nutritional ceilings for each health condition. When today's accumulated intake exceeds a limit, the engine adds a real-time alert to `alertasHoy`.
+
+| Condition | Nutrient | Daily Limit |
+|---|---|---|
+| `diabetes` | `azucar` | ≤ 25 g |
+| `diabetes` | `carb` | ≤ 130 g |
+| `hipertension` | `sodio` | ≤ 1 500 mg |
+| `bajo-sodio` | `sodio` | ≤ 1 500 mg |
+| `enfermedad-renal` | `sodio` | ≤ 1 500 mg |
+| `enfermedad-renal` | `potasio` | ≤ 2 000 mg |
+| `enfermedad-renal` | `fosforo` | ≤ 800 mg |
+| `colesterol-alto` | `grasSat` | ≤ 15 g |
+| `colesterol-alto` | `colesterol` | ≤ 200 mg |
+| `keto` | `carbNetos` | ≤ 50 g |
+| `bajo-carbohidratos` | `carb` | ≤ 100 g |
+| `sin-azucar` | `azucar` | ≤ 10 g |
+| `bajo-grasa` | `gras` | ≤ 50 g |
+
+The sodium limit is also dynamically adjusted based on age even without a specific condition:
+- Conditions `hipertension`, `enfermedad-renal`, or `bajo-sodio` → **1 500 mg**
+- Age ≥ 50 (no cardiovascular condition) → **1 800 mg**
+- All other adults → **2 300 mg** (WHO general guideline)
+
+---
+
+## Macro Objectives by Condition (`OBJETIVOS_MACRO`)
+
+These percentage targets are used to evaluate the macro split in `alertasHoy` when the user has consumed more than 30 % of their TDEE:
+
+| Condition | Protein % | Carb % | Fat % |
+|---|---|---|---|
+| `default` | 20 % | 50 % | 30 % |
+| `keto` | 20 % | 5 % | 75 % |
+| `bajo-carbohidratos` | 30 % | 20 % | 50 % |
+| `bajo-grasa` | 30 % | 55 % | 15 % |
+| `paleo` | 30 % | 25 % | 45 % |
+| `vegano` | 18 % | 55 % | 27 % |
+| `vegetariano` | 18 % | 52 % | 30 % |
+| `colesterol-alto` | 22 % | 50 % | 28 % |
+| `diabetes` | 20 % | 45 % | 35 % |
+
+---
+
+## 30-Day Consumption History
+
+The engine fetches all `Consumo` documents for the authenticated user where `fechaBogota >= today - 30 days`. From this history it computes:
+
+- **Daily averages** for `cal`, `prot`, `sodio`, `fiber`, `carb`, `gras`, `azucar` (via `promedioNutri`)
+- **Skipped meal detection** — if a meal type (desayuno, almuerzo, cena) appears in fewer than 50 % of logged days over the period, it is flagged as a `comidasSaltadas` entry
+
+```js
+function detectarComidasSaltadas(consumos) {
+  const fechas = [...new Set(consumos.map(c => c.fechaBogota))];
+  if (fechas.length < 3) return [];   // requires at least 3 days of data
+  return ['desayuno', 'almuerzo', 'cena'].reduce((acc, tipo) => {
+    const pct = fechas.filter(f =>
+      consumos.some(c => c.fechaBogota === f && c.tipo === tipo)
+    ).length / fechas.length;
+    if (pct < 0.5) acc.push({ tipo, porcentaje: Math.round(pct * 100) });
+    return acc;
+  }, []);
+}
+```
+
+---
+
+## Timezone Handling
+
+Like the consumption controller, the recommendations route uses **Bogotá UTC−5** for all date comparisons:
+
+```js
+const offsetMs   = -5 * 60 * 60 * 1000;
+const bogota     = new Date(ahora.getTime() + offsetMs);
+const horaActual = bogota.getUTCHours();  // 0–23, drives contextual meal tips
+const fechaHoy   = bogota.toISOString().split('T')[0];
+const hace30Dias = new Date(bogota.getTime() - 30 * 24 * 60 * 60 * 1000);
+```
+
+`horaActual` is passed into `generarRecomendaciones` to produce time-sensitive `contextoHorario` messages (e.g. late-night eating warnings, skipped breakfast alerts).
+
+---
+
+## API Endpoints
+
+### Get Recommendations
+
+```bash
+GET /api/recomendaciones
+Authorization: Bearer <token>
+```
+
+The server fetches the user's body metrics and `healthProfile.condiciones` / `healthProfile.categorias`, queries the last 30 days of `Consumo` records and today's records in parallel, then calls `generarRecomendaciones`.
+
+**Response structure:**
+
+```json
+{
+  "ok": true,
+  "nombre": "María",
+  "recomendaciones": {
+    "imc": { "valor": 24.1, "categoria": "normal" },
+    "caloriasObjetivo": 1890,
+    "caloriasHoy": 1420,
+    "caloriasRestantes": 470,
+    "progresoHoy": 75,
+    "alertas": [...],
+    "alertasHoy": [...],
+    "contextoHorario": [...],
+    "alimentacion": [...],
+    "ejercicio": [...],
+    "ejercicioHoy": [...],
+    "hidratacion": { "litros": 2.1, "vasos": 8, "nota": "..." },
+    "comidasSaltadas": [...],
+    "condicionesDetectadas": ["diabetes"],
+    "categoriasActivas": ["desayuno"],
+    "nutriPromedio": {
+      "calPromedio": 1750, "protPromedio": 62,
+      "carbPromedio": 210, "grasaPromedio": 58,
+      "sodioPromedio": 1800, "fibraPromedio": 18
+    },
+    "macrosHoy": { "carbPct": 48, "protPct": 22, "grasPct": 30 }
+  }
+}
+```
+
+### Get Recommendation Filters
+
+```bash
+GET /api/recomendaciones/filtros
+Authorization: Bearer <token>
+```
+
+Returns **only** `condiciones` and `categorias` — not allergies or preferences, which are irrelevant to the recommendation engine:
+
+```json
+{
+  "condiciones": ["diabetes", "hipertension"],
+  "categorias":  ["desayuno"]
+}
+```
+
+---
+
+## The `PanelRecomendaciones` Component
+
+The front-end panel (`PanelRecomendaciones.jsx`) is embedded in the tracking view and re-fetches from `/api/recomendaciones` whenever its `versionFiltros` prop increments. This prop is bumped by the parent component whenever the user changes their health condition filters on the home page — ensuring the panel stays in sync without polling.
+
+The panel renders these sections:
+
+| Section | Source field |
+|---|---|
+| IMC badge + calorie target | `imc`, `caloriasObjetivo` |
+| Caloric progress bar today | `caloriasHoy`, `progresoHoy` |
+| Macro split bars today | `macrosHoy` |
+| Real-time contextual tips | `contextoHorario` |
+| General profile alerts | `alertas` |
+| Today's micronutrient alerts | `alertasHoy` |
+| Suggested activity for today | `ejercicioHoy` |
+| Hydration goal | `hidratacion` |
+| Skipped meal warnings | `comidasSaltadas` |
+| Nutrition tips | `alimentacion` |
+| General exercise guidance | `ejercicio` |
+
+<Note>
+  All recommendation text is generated purely server-side. The client panel is a display layer only — it never applies local filtering logic to the recommendation data.
+</Note>

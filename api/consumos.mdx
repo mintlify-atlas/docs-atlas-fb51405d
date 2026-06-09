@@ -236,18 +236,12 @@ Checks whether a specific recipe has already been logged today, and whether it c
 
 ### POST /api/consumos/:recetaId
 
-Logs a recipe as consumed right now. The `tipo` is inferred automatically from the current Bogotá hour (see auto-detection table above). Pass `tipo` in the request body to override.
+Logs a recipe as consumed right now. The `tipo` is inferred automatically from the current Bogotá hour (see auto-detection table above). No request body is accepted — the meal slot cannot be overridden on this endpoint. Use `POST /api/consumos/manual` if you need to choose the slot explicitly.
 
 **Path parameter**
 
 <ParamField path="recetaId" type="string" required>
   MongoDB ObjectId of the recipe to log.
-</ParamField>
-
-**Request body**
-
-<ParamField body="tipo" type="string">
-  Override the automatic meal slot: `desayuno`, `almuerzo`, `cena`, or `snack`. If omitted, the slot is inferred from the current hour.
 </ParamField>
 
 **Response** `201 Created`
@@ -263,14 +257,12 @@ Logs a recipe as consumed right now. The `tipo` is inferred automatically from t
 | Status | Condition |
 |---|---|
 | `404` | Recipe not found |
-| `409` | Snack limit reached (max 3/day) or duplicate meal slot on the same day |
+| `409` | Snack limit reached (max 3 per day) |
 
 <CodeGroup>
 ```bash cURL
 curl -X POST https://api.healtyhelp.com/api/consumos/661e0f2a3b4c5d6e7f8a9b0c \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{ "tipo": "almuerzo" }'
+  -H "Authorization: Bearer <token>"
 ```
 </CodeGroup>
 

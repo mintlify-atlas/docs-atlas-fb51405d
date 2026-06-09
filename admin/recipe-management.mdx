@@ -1,5 +1,5 @@
 ---
-title: "Create, Import, and Manage Recipes as Admin"
+title: "HealtyHelp Admin: Create, Import, and Manage Recipes"
 sidebarTitle: "Recipe Management"
 description: "Full API reference for creating, updating, deleting, bulk-importing, and exporting HealtyHelp recipes, including the complete nutritional schema."
 ---
@@ -36,7 +36,7 @@ Content-Type: application/json
 ```
 
 **Required fields:** `nombre`, `desc`, `cat`  
-**Optional fields:** `img`, `salud`, `ingredientes`, `pasos`, `nutri`, `tiempoMinutos`
+**Optional fields:** `img`, `salud`, `ingredientes`, `pasos`, `nutri`
 
 The server strips `resenas`, `puntosProm`, and `totalResenas` from the request body before saving. After creation, all users receive a new-recipe notification via `crearNotifNuevaReceta`.
 
@@ -63,7 +63,6 @@ The server strips `resenas`, `puntosProm`, and `totalResenas` from the request b
     "Combine all ingredients, drizzle with olive oil and lemon juice.",
     "Season with salt and pepper and serve."
   ],
-  "tiempoMinutos": 25,
   "nutri": {
     "cal": 420,
     "prot": 18,

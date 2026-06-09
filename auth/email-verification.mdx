@@ -1,7 +1,7 @@
 ---
-title: "Email Verification and Password Reset Flow"
+title: "HealtyHelp Email Verification and Password Reset Flows"
 sidebarTitle: "Email Verification"
-description: "HealtyHelp requires a 6-digit email verification code after registration and supports token-based password reset via Resend."
+description: "HealtyHelp sends a 6-digit code to verify new accounts and uses a 32-byte crypto token for password reset, both expire after a set time limit."
 ---
 
 ## Overview
@@ -64,7 +64,7 @@ After registration, new accounts are **unverified** (`isVerified: false`). The u
 
 <Steps>
   <Step title="Register an account">
-    Submit a `POST /api/auth/register` request. The server generates a cryptographically random **6-digit numeric code**, hashes it with SHA-256, stores the hash and an expiry 15 minutes in the future, then sends the plaintext code to the user's email.
+    Submit a `POST /api/auth/register` request. The server generates a **6-digit numeric code** using `Math.floor(100000 + Math.random() * 900000)`, hashes it with SHA-256, stores the hash and an expiry 15 minutes in the future, then sends the plaintext code to the user's email.
 
     ```http
     POST /api/auth/register
@@ -237,7 +237,6 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "birthDate": "1995-06-15",
   "weight": 68,
   "height": 172
 }

@@ -4,8 +4,6 @@ sidebarTitle: "Introduction"
 description: "HealtyHelp is an open-source full-stack app combining a recipe catalog, NutriBot AI chatbot, nutrition tracking, and admin tools for healthy eating."
 ---
 
-## What is HealtyHelp?
-
 HealtyHelp is an open-source, full-stack healthy eating platform that helps users discover nutritious recipes, track their daily food consumption, and get personalized dietary guidance through an AI-powered chatbot. It pairs a modern React frontend with a hardened Express REST API, storing all data in MongoDB and integrating cloud services for AI inference, image hosting, and authentication.
 
 The project lives in a monorepo with two top-level packages — `client/` (React/Vite) and `server/` (Express/Node.js) — and can be self-hosted or deployed to any cloud provider.
@@ -21,8 +19,8 @@ The project lives in a monorepo with two top-level packages — `client/` (React
 | **Database** | MongoDB via Mongoose 8 |
 | **AI / Chatbot** | Groq SDK with LLaMA 3.3 70B (`llama-3.3-70b-versatile`) |
 | **Image Storage** | Cloudinary (upload, moderation, public CDN delivery) |
-| **Authentication** | JWT (jsonwebtoken) + Google OAuth 2.0 via Passport.js |
-| **Email** | Nodemailer (password reset, admin invitations) |
+| **Authentication** | JWT (jsonwebtoken) + Google OAuth 2.0 via Passport.js (passport-google-oauth20 + passport-jwt) |
+| **Email** | Resend API (`resend.com`) for password reset and admin invitation emails |
 | **Security** | Helmet, HPP, XSS filter, express-rate-limit, bcryptjs |
 | **PDF Export** | jsPDF + html2canvas (client-side) |
 

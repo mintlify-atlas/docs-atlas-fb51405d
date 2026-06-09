@@ -210,11 +210,11 @@ Authorization: Bearer <token>
 { "prompt": "Eres NutriBot, el asistente nutricional de HealtyHelp..." }
 ```
 
-### Update the prompt (admin only)
+### Update the prompt (authenticated users)
 
 ```bash
 PUT /api/chat/prompt
-Authorization: Bearer <admin-token>
+Authorization: Bearer <token>
 Content-Type: application/json
 
 { "prompt": "Nuevo prompt del sistema..." }

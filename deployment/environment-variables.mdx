@@ -1,7 +1,7 @@
 ---
-title: "HealtyHelp Environment Variables Reference"
+title: "HealtyHelp Environment Variables: Server & Client Reference"
 sidebarTitle: "Environment Variables"
-description: "Complete reference for all required and optional environment variables used by the HealtyHelp server and Vite client, including MongoDB, JWT, OAuth, Cloudinary, and email settings."
+description: "Complete reference for all server and client environment variables in HealtyHelp: MongoDB, JWT, OAuth, Cloudinary, email, and AI chatbot settings."
 ---
 
 Every secret and deployment-specific value in HealtyHelp is driven by environment variables loaded via `dotenv` on the server and Vite's `import.meta.env` on the client. Never hard-code these values — and never commit a `.env` file to version control.
@@ -45,7 +45,7 @@ Create a `.env` file in the `server/` directory (or set these as environment var
 </ParamField>
 
 <ParamField path="BACKEND_URL" type="string" required>
-  The public base URL of the server itself (no trailing slash). Used to build the Google OAuth callback URL inside `passport.js`.
+  The public base URL of the server itself (no trailing slash). Used to build the Google OAuth callback URL inside `passport.js` — the strategy constructs the callback as `` `${process.env.BACKEND_URL}/api/auth/google/callback` ``.
   - Development: `http://localhost:5000`
   - Production: `https://api.your-domain.com`
 </ParamField>
@@ -75,7 +75,7 @@ Create a `.env` file in the `server/` directory (or set these as environment var
 
 ### Google OAuth — needed for Google login
 
-These variables configure the `passport-google-oauth20` strategy in `server/config/passport.js`.
+These variables configure the `passport-google-oauth20` strategy in `server/config/passport.js`. The callback URL is constructed automatically from `BACKEND_URL` — you do not need a separate `GOOGLE_CALLBACK_URL` variable in your environment.
 
 <ParamField path="GOOGLE_CLIENT_ID" type="string">
   OAuth 2.0 client ID from Google Cloud Console.
@@ -83,13 +83,6 @@ These variables configure the `passport-google-oauth20` strategy in `server/conf
 
 <ParamField path="GOOGLE_CLIENT_SECRET" type="string">
   OAuth 2.0 client secret from Google Cloud Console.
-</ParamField>
-
-<ParamField path="GOOGLE_CALLBACK_URL" type="string">
-  The full callback URL registered in Google Cloud Console. Must match exactly.
-  Example: `https://api.your-domain.com/api/auth/google/callback`
-
-  > Note: the passport strategy constructs the callback URL as `` `${process.env.BACKEND_URL}/api/auth/google/callback` ``, so `BACKEND_URL` must be set correctly instead of (or in addition to) this variable.
 </ParamField>
 
 ---
@@ -183,7 +176,6 @@ GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # ── Google OAuth ─────────────────────────────────────────────────────────────
 GOOGLE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxx
-GOOGLE_CALLBACK_URL=http://localhost:5000/api/auth/google/callback
 
 # ── Cloudinary ───────────────────────────────────────────────────────────────
 CLOUDINARY_CLOUD_NAME=your_cloud_name

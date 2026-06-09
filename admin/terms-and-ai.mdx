@@ -1,7 +1,7 @@
 ---
-title: "Manage Terms of Service and NutriBot AI Prompt"
+title: "HealtyHelp Admin: Terms of Service and AI Prompt Setup"
 sidebarTitle: "Terms & AI Config"
-description: "How to publish new Terms of Service versions and configure the NutriBot system prompt from the HealtyHelp admin panel, including model schemas and TTL cache behavior."
+description: "How to publish Terms of Service versions and configure the NutriBot system prompt from the HealtyHelp admin panel, with TTL cache details."
 ---
 
 The admin panel exposes two configuration endpoints that affect all users: the Terms of Service document and the NutriBot AI system prompt.
@@ -58,7 +58,7 @@ If no terms have been published yet, `terms` is `null`.
 ### Publish a New Version
 
 <Warning>
-  Publishing a new version immediately sets `termsAccepted: false` and `termsVersion: ""` on **every non-admin user account**. The next time each user opens the app they will see a re-acceptance modal and cannot continue until they accept. This action cannot be undone.
+  Publishing a new version immediately sets `termsAccepted: false` and `termsVersion: ""` on **every user account except the admin who publishes**. This includes other admin accounts. The next time each affected user opens the app they will see a re-acceptance modal and cannot continue until they accept. This action cannot be undone.
 </Warning>
 
 ```bash
@@ -96,7 +96,7 @@ Content-Type: application/json
 }
 ```
 
-The admin who publishes the terms is **excluded** from the `updateMany` — only `{ _id: { $ne: req.user._id } }` records are flagged.
+The admin who publishes the terms is **excluded** from the `updateMany` — all other accounts (including other admins) match `{ _id: { $ne: req.user._id } }` and have their `termsAccepted` reset to `false`.
 
 ### TermsManager Component
 
@@ -213,7 +213,7 @@ The user's health profile — conditions, meal categories, allergies, and prefer
 `client/src/components/admin/PanelIA.jsx` shows:
 
 - A header with the NutriBot robot icon and subtitle.
-- A status badge: **Gemini 2.5 Flash · Activo**.
+- A status badge: **Llama 3.3 70B · Activo**.
 - Metric cards (total users, messages today — placeholder, tokens used — placeholder).
 - A resizable `<textarea>` for editing the system prompt with a live character counter.
 - A note reminding admins that the user health profile is appended automatically.

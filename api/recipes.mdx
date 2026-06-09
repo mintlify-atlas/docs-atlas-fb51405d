@@ -1,7 +1,7 @@
 ---
-title: "HealtyHelp Recipes API: CRUD and Reviews"
+title: "HealtyHelp Recipes API: CRUD, Reviews, and Admin Tools"
 sidebarTitle: "Recipes API"
-description: "Full reference for HealtyHelp recipe endpoints: listing, detail, admin CRUD, import/export, reviews, votes, and threaded replies."
+description: "Full reference for HealtyHelp recipe endpoints: listing, detail, admin CRUD, import/export, reviews, votes, threaded replies, and images."
 ---
 
 # Recipes API
@@ -613,6 +613,76 @@ Deletes a review. The authenticated user may only delete their own reviews; admi
 |---|---|
 | `403` | Caller is not the author or an admin |
 | `404` | Recipe or review not found |
+
+---
+
+## POST /api/recipes/:id/resenas/:resenaId/imagen
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Uploads or replaces the image attached to the authenticated user's existing review. The image enters the moderation queue with `estado: "pendiente"`. An already-approved image (`estado: "aprobada"`) cannot be replaced.
+
+**Request** `Content-Type: multipart/form-data`
+
+**Path parameters**
+
+| Param | Description |
+|---|---|
+| `id` | Recipe ObjectId |
+| `resenaId` | Review ObjectId |
+
+| Field | Type | Description |
+|---|---|---|
+| `imagen` | `File` | Image file to attach to the review |
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "message": "Imagen subida. Pendiente de aprobación (≈3 días).",
+  "imagen": { "url": null, "estado": "pendiente" }
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | No file received |
+| `400` | Review already has an approved image |
+| `403` | Caller is not the review author |
+| `404` | Recipe or review not found |
+
+---
+
+## DELETE /api/recipes/:id/resenas/imagen
+
+<Tip>Requires `Authorization: Bearer <token>`</Tip>
+
+Removes the image from the authenticated user's own review on a recipe. The image is deleted from Cloudinary and the `imagen` field is cleared.
+
+**Path parameter**
+
+| Param | Description |
+|---|---|
+| `id` | Recipe ObjectId |
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "message": "Imagen eliminada correctamente"
+}
+```
+
+**Error responses**
+
+| Status | Condition |
+|---|---|
+| `400` | Review has no image to remove |
+| `404` | Recipe not found or user has no review on it |
 
 ---
 

@@ -27,12 +27,12 @@ HealtyHelp is a monorepo containing two independent packages that communicate ov
 │  Routes → Controllers → Mongoose Models                          │
 │  /api/auth  /api/users  /api/recipes  /api/consumos              │
 │  /api/chat  /api/admin  /api/favoritos  /api/recomendaciones     │
-│  /api/terms  /api/notifications  /api/contacto  /api/utils       │
+│  /api/terms  /api/notifications  /api/contacto  /api/proxy-imagen│
 └────┬──────────────┬──────────────┬──────────────┬───────────────┘
      │              │              │              │
      ▼              ▼              ▼              ▼
  MongoDB        Groq AI       Cloudinary    Google OAuth
- Atlas          LLaMA 3.3     (images)      + Nodemailer
+ Atlas          LLaMA 3.3     (images)      + Resend API
  (Mongoose)     70B (chat)    (CDN)         (email)
 ```
 
@@ -92,7 +92,7 @@ healtyhelp/
     MongoDB via Mongoose 8. Eight collections — User, Recipe, Consumo, Notification, AIConfig, AdminLog, AdminInvitation, TermsDocument.
   </Card>
   <Card title="Integrations" icon="plug">
-    Groq AI (LLaMA 3.3 70B), Cloudinary (images), Google OAuth via Passport, Nodemailer (email).
+    Groq AI (LLaMA 3.3 70B), Cloudinary (images), Google OAuth via Passport, Resend API (email).
   </Card>
 </CardGroup>
 
@@ -239,7 +239,7 @@ server/models/Recipe.js       ← Mongoose schema + indexes + instance methods
 | `/api/terms` | Active T&C version read; admin T&C publishing |
 | `/api/notifications` | User notification list and mark-as-read |
 | `/api/contacto` | Contact form submission |
-| `/api/utils` | Utility endpoints (e.g., backend health ping) |
+| `/api/proxy-imagen` | Cross-origin image proxy — fetches an external image URL server-side and streams it to the client, avoiding browser CORS restrictions |
 
 ---
 
@@ -318,10 +318,10 @@ The primary data store. The server connects via `MONGO_URI` using Mongoose's `co
 NutriBot sends the user's message plus the last 10 conversation messages as history to the Groq API using the `groq-sdk` package. The system prompt is loaded from the `AIConfig` collection at request time, allowing admins to update NutriBot's behavior without redeploying.
 
 ### Cloudinary
-Recipe review images are uploaded to Cloudinary and stored with a status of `pendiente` until an admin approves or rejects them via the `ImagenesAprobacion` panel. Approved images return a public CDN URL; rejected ones are deleted from Cloudinary using the stored `publicId`.
+Recipe review images are uploaded to Cloudinary and stored with a status of `pendiente` until an admin approves or rejects them via the `ImagenesAprobacion` panel. Approved images return a public CDN URL; rejected ones are deleted from Cloudinary using the stored `publicId`. Avatars are uploaded to the `healtyhelp/avatars` folder (max 2 MB, cropped to 400×400 px); review images go to `healtyhelp/resenas` (max 5 MB, limited to 1200×1200 px).
 
 ### Google OAuth via Passport
 `server/config/passport.js` configures `passport-google-oauth20` with `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a callback URL derived from `BACKEND_URL`. The strategy handles three cases: existing Google-linked account (update avatar), existing email-only account (link Google ID), and brand-new account (create user). Google profile photos are upgraded from 96 px to 400 px resolution automatically.
 
-### Nodemailer
-Handles transactional email: password-reset tokens delivered to the user's address, and admin invitation links sent to prospective admins. SMTP credentials are read from `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, and `EMAIL_PASS`.
+### Resend API
+Handles transactional email via the Resend HTTP API (`https://api.resend.com/emails`): password-reset tokens delivered to the user's address, and admin invitation links sent to prospective admins. Credentials are read from `RESEND_API_KEY` (API key) and `EMAIL_FROM` (sender address). The `CONTACT_EMAIL` variable routes contact-form submissions to the designated support inbox.

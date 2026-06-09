@@ -258,12 +258,16 @@ Returns the current ban status for a specific user.
 
 ### POST /api/admin/invite
 
-Generates a 24-hour single-use invitation link and sends it to the specified email address.
+Generates a 24-hour single-use invitation link and sends it to the specified email address. The `name` provided here is stored in the invitation and becomes the display name of the new admin account when the invite is accepted.
 
 **Request Body**
 
 <ParamField body="email" type="string" required>
   Email address of the person being invited. Must not already be registered.
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Display name for the new admin account. Stored in the invitation and used when the account is created.
 </ParamField>
 
 **Response**
@@ -282,7 +286,7 @@ Generates a 24-hour single-use invitation link and sends it to the specified ema
 curl -X POST https://api.healtyhelp.com/api/admin/invite \
   -H "Authorization: Bearer <admin_token>" \
   -H "Content-Type: application/json" \
-  -d '{ "email": "newadmin@example.com" }'
+  -d '{ "email": "newadmin@example.com", "name": "New Admin" }'
 ```
 
 **Error cases**
@@ -343,7 +347,7 @@ Immediately revokes a pending invitation. The invitation link will no longer be 
 
 <Note>This endpoint is **public** — no Bearer token is required.</Note>
 
-Accepts an invitation and creates a new admin account. The token is extracted from the invitation URL and has a 24-hour TTL.
+Accepts an invitation and creates a new admin account. The token is extracted from the invitation URL and has a 24-hour TTL. The display name and email are taken from the invitation record — only a password must be provided.
 
 **Path Parameters**
 
@@ -353,12 +357,8 @@ Accepts an invitation and creates a new admin account. The token is extracted fr
 
 **Request Body**
 
-<ParamField body="name" type="string" required>
-  Display name for the new admin account.
-</ParamField>
-
 <ParamField body="password" type="string" required>
-  Password for the new admin account.
+  Password for the new admin account. The display name and email are supplied from the invitation record created when the invite was sent.
 </ParamField>
 
 **Response**

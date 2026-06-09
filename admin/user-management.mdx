@@ -1,7 +1,7 @@
 ---
-title: "Manage Users, Roles, and Bans in HealtyHelp"
+title: "HealtyHelp Admin: Manage Users, Roles, and Bans Easily"
 sidebarTitle: "User Management"
-description: "API reference for listing, deleting, promoting, and banning HealtyHelp users from the admin panel, including ban fields and login behavior."
+description: "API reference for listing, deleting, role-updating, and banning HealtyHelp users from the admin panel, including all ban fields and login behavior."
 ---
 
 All user-management endpoints are under `/api/admin/` and require a valid JWT belonging to a user with `role: "admin"`.
@@ -93,7 +93,7 @@ Content-Type: application/json
 
 | Requesting admin | Target is SuperAdmin | Target is Admin | Target is User |
 |---|---|---|---|
-| Regular admin | ✗ (403) | ✗ (403) | Can demote/promote to user only |
+| Regular admin | ✗ (403) | ✗ (403) | Can only set role to `"user"` — cannot promote to `"admin"` |
 | SuperAdmin | ✗ (403) | Can demote to user | Can promote to admin |
 
 ```json

@@ -1,5 +1,5 @@
 ---
-title: "Deploy HealtyHelp to Production"
+title: "Step-by-Step Guide to Deploying HealtyHelp to Production"
 sidebarTitle: "Production Setup"
 description: "Step-by-step guide to build the Vite client, deploy the Express server, configure all environment variables, and harden HealtyHelp for production."
 ---
@@ -124,9 +124,8 @@ Set every variable from the table below in your server host's environment settin
 |---|---|
 | `GOOGLE_CLIENT_ID` | Google Cloud Console → APIs & Services → Credentials |
 | `GOOGLE_CLIENT_SECRET` | Same credential entry |
-| `GOOGLE_CALLBACK_URL` | `https://api.your-domain.com/api/auth/google/callback` |
 
-Remember to add this callback URL to the **Authorised redirect URIs** list in your Google Cloud OAuth client settings.
+Remember to add `https://api.your-domain.com/api/auth/google/callback` to the **Authorised redirect URIs** list in your Google Cloud OAuth client settings. The callback URL is constructed automatically from `BACKEND_URL` by `server/config/passport.js`.
 
 **Cloudinary**
 

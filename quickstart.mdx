@@ -24,7 +24,7 @@ This guide walks you through cloning HealtyHelp, wiring up all required services
     | **Groq API key** | Register at [console.groq.com](https://console.groq.com) and create a key. Used to power NutriBot with LLaMA 3.3 70B. |
     | **Google OAuth credentials** *(optional)* | Required only if you want Google Sign-In. Create an OAuth 2.0 client in the [Google Cloud Console](https://console.cloud.google.com). |
     | **Cloudinary account** *(optional)* | Required only if you want image upload and moderation for recipe reviews. Register at [cloudinary.com](https://cloudinary.com). |
-    | **SMTP credentials** *(optional)* | Required for password-reset emails and admin invitation emails via Nodemailer. |
+    | **Resend account** *(optional)* | Required for password-reset emails and admin invitation emails. Register at [resend.com](https://resend.com) and create an API key. |
   </Step>
 
   <Step title="Clone the Repository">
@@ -90,11 +90,10 @@ This guide walks you through cloning HealtyHelp, wiring up all required services
     CLOUDINARY_API_KEY=000000000000000
     CLOUDINARY_API_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
-    # ── Nodemailer / Email (optional) ─────────────────────────────────────────
-    EMAIL_HOST=smtp.gmail.com
-    EMAIL_PORT=587
-    EMAIL_USER=you@gmail.com
-    EMAIL_PASS=your-app-password
+    # ── Resend (optional, transactional email) ────────────────────────────────
+    RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    EMAIL_FROM=noreply@yourdomain.com
+    CONTACT_EMAIL=support@yourdomain.com
 
     # ── Super-admin bootstrap (used by scripts/initSuperAdmin.js) ────────────
     SUPER_ADMIN_NAME=Admin
@@ -121,10 +120,9 @@ This guide walks you through cloning HealtyHelp, wiring up all required services
     | `CLOUDINARY_CLOUD_NAME` | Optional | Cloudinary cloud name for image uploads. |
     | `CLOUDINARY_API_KEY` | Optional | Cloudinary API key. |
     | `CLOUDINARY_API_SECRET` | Optional | Cloudinary API secret. |
-    | `EMAIL_HOST` | Optional | SMTP host for Nodemailer (password resets, invitations). |
-    | `EMAIL_PORT` | Optional | SMTP port (typically `587` for TLS). |
-    | `EMAIL_USER` | Optional | SMTP username / sender address. |
-    | `EMAIL_PASS` | Optional | SMTP password or app-specific password. |
+    | `RESEND_API_KEY` | Optional | API key from [resend.com](https://resend.com). Required for password-reset and admin invitation emails. |
+    | `EMAIL_FROM` | Optional | Sender address used in all outgoing emails (e.g. `noreply@yourdomain.com`). |
+    | `CONTACT_EMAIL` | Optional | Destination address for contact-form submissions. Falls back to `healtyhelp@gmail.com` if unset. |
     | `SUPER_ADMIN_EMAIL` | Optional | Email for the initial super-admin account (used by `initSuperAdmin.js`). |
     | `SUPER_ADMIN_PASSWORD` | Optional | Password for the initial super-admin account. Change immediately after first login. |
     | `SUPER_ADMIN_NAME` | Optional | Display name for the initial super-admin account. |
@@ -180,10 +178,11 @@ This guide walks you through cloning HealtyHelp, wiring up all required services
   </Step>
 
   <Step title="Initialize the Super-Admin Account">
-    Before you can access the admin panel, run the bootstrap script from the **project root** (or from `server/`). It reads `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_NAME`, and `SUPER_ADMIN_PASSWORD` from your `server/.env` and creates an admin user with `role: 'admin'` and `isSuperAdmin: true`:
+    Before you can access the admin panel, run the bootstrap script from the **`server/` directory**. The script loads `server/.env` via `dotenv` and must be executed with `server/` as the working directory so that `dotenv` can locate the `.env` file. It reads `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_NAME`, and `SUPER_ADMIN_PASSWORD` from your `.env` and creates a user with `role: 'admin'` and `isSuperAdmin: true`:
 
     ```bash
-    node server/scripts/initSuperAdmin.js
+    cd server
+    node scripts/initSuperAdmin.js
     ```
 
     Expected output:
